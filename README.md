@@ -206,5 +206,4 @@ MIT License. Use freely. If this changes how you train models, a citation would 
 - **Qwen** (Alibaba) — Base model
 - **LlamaFactory** — Training framework
 - **EleutherAI** — lm-evaluation-harness
-- **Dr. Kumar Rajamani** (Samsung, 2022) — A footnote that deserved to be a paper
 - 🪼 — The jellyfish
