@@ -1,0 +1,48 @@
+### 🪼 Project Jellyfish — 실험 C Phase 2: GPU 이어서 (80%)
+### CPU 앵커 체크포인트에서 이어서 GPU로 400 steps
+### Phase 1 완료 후 실행할 것
+
+### model
+model_name_or_path: Qwen/Qwen2.5-7B-Instruct
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: all
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.05
+
+### dataset
+dataset: alpaca_en
+template: qwen
+cutoff_len: 512
+
+### output — 같은 output_dir, 체크포인트에서 이어서
+output_dir: saves/jellyfish_exp_c
+logging_steps: 10
+save_steps: 100
+save_total_limit: 2
+overwrite_output_dir: false
+
+### resume from CPU anchor checkpoint
+resume_from_checkpoint: saves/jellyfish_exp_c/checkpoint-100
+
+### train — GPU 구간
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 4
+learning_rate: 1.0e-4
+max_steps: 500
+lr_scheduler_type: cosine
+warmup_steps: 30
+bf16: true
+seed: 42
+
+### quantization (QLoRA)
+quantization_bit: 4
+quantization_method: bitsandbytes
+
+### windows fix
+dataloader_num_workers: 0
