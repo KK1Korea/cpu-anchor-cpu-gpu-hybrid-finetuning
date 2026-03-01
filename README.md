@@ -88,17 +88,6 @@ The anchor requires **determinism + precision**. GPU fp32 provides precision but
 
 ---
 
-## Prior Art
-
-**Dr. Kumar Rajamani (Samsung, 2022)** observed in a footnote that CPU-trained models showed higher accuracy "most times" compared to GPU-trained models. Zero follow-up studies. The observation was never formalized.
-
-This project is the first to:
-- Formalize the hypothesis (CPU anchor + GPU exploration)
-- Design controlled experiments (identical hyperparameters, single variable: device + precision)
-- Provide empirical evidence (train loss, MMLU benchmark, step-by-step loss curves)
-
----
-
 ## Reproduction
 
 ### Environment
