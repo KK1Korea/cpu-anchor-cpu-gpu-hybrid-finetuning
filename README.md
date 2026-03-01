@@ -177,6 +177,9 @@ Trained LoRA adapters are hosted on HuggingFace:
 6. Does CPU determinism hold on APU (unified memory) architectures?
 7. Does the anchor provide overfitting resistance at full scale?
 8. What is the optimal CPU:GPU ratio? Is 20% ideal, or can less suffice?
+9. Does GPU fp32-only training (no CPU) match the anchor effect, or is CPU determinism essential? (Isolates precision vs. determinism)
+10. Does CPU fp32 anchor + GPU fp32 exploration outperform CPU fp32 + GPU bf16? (Tests whether maintaining precision in Phase2 amplifies the anchor effect)
+
 
 ---
 
@@ -189,6 +192,8 @@ Trained LoRA adapters are hosted on HuggingFace:
 | C | CPU 100 → GPU 400 | ✅ Done | Hybrid |
 | D | CPU 15% → GPU 85% | ⬜ Not run | Equipment limitation |
 | E | GPU → CPU (reverse) | ⬜ Not run | Equipment limitation |
+| F | GPU fp32-only 500 steps | ⬜ Not run | Isolates precision vs. determinism |
+| G | CPU fp32 100 → GPU fp32 400 | ⬜ Not run | Tests precision retention in Phase2 |
 
 ---
 
