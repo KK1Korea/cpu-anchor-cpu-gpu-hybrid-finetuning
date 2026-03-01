@@ -146,10 +146,14 @@ experiment/
 │   └── run_exp_c.bat                 # Run experiment C (Phase1 + Phase2)
 └── results/
     └── benchmark_log.txt             # Full experiment log with step-by-step data
-adapters/
-├── jellyfish_exp_a/                  # LoRA adapter (GPU-only)
-└── jellyfish_exp_c/                  # LoRA adapter (CPU→GPU hybrid)
-```
+ ```
+### LoRA Adapters
+
+Trained LoRA adapters are hosted on HuggingFace:
+🤗 **[KK1kk1/jellyfish-cpu-anchor-lora](https://huggingface.co/KK1kk1/jellyfish-cpu-anchor-lora)**
+
+- `jellyfish_exp_a/` — GPU-only baseline adapter
+- `jellyfish_exp_c/` — CPU-anchor hybrid adapter
 
 ---
 
