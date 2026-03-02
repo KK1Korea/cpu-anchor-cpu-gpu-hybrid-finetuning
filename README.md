@@ -114,6 +114,8 @@ The industry treats CPU as "slow GPU." Nobody uses CPU for training quality. We 
 
 The anchor requires **determinism + precision**. GPU fp32 provides precision but not determinism. Only CPU provides both.
 
+**Industry implication:** The current trend of lowering training precision (fp32 → bf16 → fp8 → fp4) for speed may be silently degrading model knowledge quality in ways that train loss cannot detect. Experiment G shows that even the bf16 → fp32 difference, invisible in train loss, changes what the model knows.
+
 ---
 
 ## Reproduction
