@@ -1,3 +1,6 @@
+[![Built with Claude](https://img.shields.io/badge/Built%20with-Claude-blueviolet?style=flat-square&logo=anthropic)](https://www.anthropic.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+[![HuggingFace](https://img.shields.io/badge/🤗-LoRA%20Adapters-yellow?style=flat-square)](https://huggingface.co/KK1kk1/jellyfish-cpu-anchor-lora)
 # 🪼 Jellyfish: CPU-Anchor Hybrid Training
 
 **The first empirical evidence that CPU deterministic computation can anchor GPU fine-tuning, achieving 22.5% lower training loss with equivalent generalization.**
