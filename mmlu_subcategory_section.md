@@ -49,3 +49,7 @@ The CPU anchor didn't uniformly improve everything. It **redistributed** — awa
 This is a single seed, 500 steps, 7B model. The pattern needs multi-seed verification before drawing conclusions. But if it holds, the implication is that CPU anchoring doesn't just reduce train loss — it changes **what the model is good at.**
 
 Full per-subject scores for all 57 MMLU subjects are available in the repository.
+
+### One more question
+
+If the selective improvement in understanding and judgment is real — does it extend to long-context coherence? A model that genuinely "understands" should maintain context over thousands of tokens better than one relying on pattern matching. Needle-in-a-haystack and multi-turn consistency tests could reveal differences that MMLU's short-form questions cannot capture.
