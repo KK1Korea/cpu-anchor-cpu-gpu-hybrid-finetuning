@@ -1,0 +1,20 @@
+### Jellyfish Eval — Experiment G (CPU fp32 anchor + GPU fp32 exploration)
+
+### model
+model_name_or_path: Qwen/Qwen2.5-7B-Instruct
+adapter_name_or_path: saves/jellyfish_exp_g
+trust_remote_code: true
+
+### method
+finetuning_type: lora
+
+### quantization
+quantization_bit: 4
+quantization_method: bitsandbytes
+
+### eval
+task: mmlu_test
+template: qwen
+lang: en
+n_shot: 5
+per_device_eval_batch_size: 4
