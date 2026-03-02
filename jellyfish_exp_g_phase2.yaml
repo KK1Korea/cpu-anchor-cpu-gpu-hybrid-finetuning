@@ -1,0 +1,50 @@
+### 🪼 Project Jellyfish — 실험 G Phase 2: GPU fp32 이어서 (80%)
+### CPU fp32 앵커 체크포인트에서 이어서 GPU fp32로 400 steps
+### 실험 C와 동일 앵커, Phase2 정밀도만 bf16 → fp32로 변경
+### Phase 1 = 실험 C checkpoint-100 재사용 (동일 앵커 보장)
+
+### model
+model_name_or_path: Qwen/Qwen2.5-7B-Instruct
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: all
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.05
+
+### dataset
+dataset: alpaca_en
+template: qwen
+cutoff_len: 512
+
+### output — G 전용 디렉토리
+output_dir: saves/jellyfish_exp_g
+logging_steps: 10
+save_steps: 100
+save_total_limit: 2
+overwrite_output_dir: false
+
+### resume from CPU anchor checkpoint (실험 C와 동일 앵커)
+resume_from_checkpoint: saves/jellyfish_anchor_g/checkpoint-100
+
+### train — GPU fp32 구간 (bf16 OFF → fp32 강제)
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 1.0e-4
+max_steps: 500
+lr_scheduler_type: cosine
+warmup_steps: 30
+bf16: false
+fp16: false
+seed: 42
+
+### quantization (QLoRA)
+quantization_bit: 4
+quantization_method: bitsandbytes
+
+### windows fix
+dataloader_num_workers: 0

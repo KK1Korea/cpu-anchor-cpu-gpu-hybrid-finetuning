@@ -1,0 +1,48 @@
+### 🪼 Project Jellyfish — 실험 G Phase 1: CPU 앵커 (20%)
+### Qwen2.5-7B-Instruct QLoRA 4-bit, CPU에서 100 steps
+### ⚠️ 실행 시 반드시 CUDA_VISIBLE_DEVICES=-1 로 GPU 숨길 것
+### ⚠️ 이 체크포인트는 G 전용 폴더에 영구 보존 (Phase2가 삭제 불가)
+
+### model
+model_name_or_path: Qwen/Qwen2.5-7B-Instruct
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: all
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.05
+
+### dataset
+dataset: alpaca_en
+template: qwen
+cutoff_len: 512
+
+### output — G 전용 앵커 폴더 (Phase2와 분리 → 삭제 방지)
+output_dir: saves/jellyfish_anchor_g
+logging_steps: 10
+save_steps: 100
+save_total_limit: 2
+
+### train — CPU 구간
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 4
+learning_rate: 1.0e-4
+max_steps: 100
+lr_scheduler_type: cosine
+warmup_steps: 30
+seed: 42
+
+### ⚠️ 핵심 설정: CPU fp32 = 최대 정밀도 앵커
+bf16: false
+fp16: false
+
+### quantization (QLoRA) — bnb 0.49.2 CPU QLoRA 지원 ✅
+quantization_bit: 4
+quantization_method: bitsandbytes
+
+### windows fix
+dataloader_num_workers: 0
