@@ -168,7 +168,9 @@ Trained LoRA adapters are hosted on HuggingFace:
 8. What is the optimal CPU:GPU ratio? Is 20% ideal, or can less suffice?
 9. Does GPU fp32-only training (no CPU) match the anchor effect, or is CPU determinism essential? (Isolates precision vs. determinism)
 10. Does CPU fp32 anchor + GPU fp32 exploration outperform CPU fp32 + GPU bf16? (Tests whether maintaining precision in Phase2 amplifies the anchor effect)
-
+11. Does CPU fp64 (double precision) anchor produce a deeper basin than fp32 anchor? 
+    (fp64 mantissa 52-bit vs fp32 mantissa 23-bit — if anchor precision scales with training quality, 
+    this implies a new scaling axis: anchor precision as a hyperparameter)
 
 ---
 
@@ -183,6 +185,7 @@ Trained LoRA adapters are hosted on HuggingFace:
 | E | GPU → CPU (reverse) | ⬜ Not run | Equipment limitation |
 | F | GPU fp32-only 500 steps | ⬜ Not run | Isolates precision vs. determinism |
 | G | CPU fp32 100 → GPU fp32 400 | ⬜ Not run | Tests precision retention in Phase2 |
+| H | CPU fp64 100 → GPU fp32 400 | ⬜ Not run | Tests whether higher-precision anchor (double precision) deepens the basin further |
 
 ---
 
