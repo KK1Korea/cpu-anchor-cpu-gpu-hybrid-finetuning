@@ -212,9 +212,11 @@ Trained LoRA adapters are hosted on HuggingFace:
 8. What is the optimal CPU:GPU ratio? Is 20% ideal, or can less suffice?
 9. Does GPU fp32-only training (no CPU) match the anchor effect, or is CPU determinism essential? (Isolates precision vs. determinism)
 10. ~~Does CPU fp32 anchor + GPU fp32 exploration outperform CPU fp32 + GPU bf16?~~ **Answered: Train loss — No (Δ 0.12%). MMLU — Yes.** G outperformed C in all 4 MMLU categories (+0.32% overall), with STEM recovering from C's decline. Same loss, different knowledge distribution.
+    - **10-1.** If higher Phase2 precision recovers lost knowledge, does the pattern continue? Does fp64 → fp32 → bf16 → fp8 form a monotonic quality gradient invisible to train loss?
 11. Does CPU fp64 (double precision) anchor produce a deeper basin than fp32 anchor? 
     (fp64 mantissa 52-bit vs fp32 mantissa 23-bit — if anchor precision scales with training quality, 
     this implies a new scaling axis: anchor precision as a hyperparameter)
+    - **11-1.** Does higher CPU anchor precision (fp32 → fp64 → fp128) produce progressively more precise anchors? If the anchor defines the basin, a sharper anchor may create tighter basin walls — constraining GPU exploration more effectively.
 12. Does QLoRA 4-bit quantization act as a precision ceiling that masks Phase2 precision differences?
     (Partially answered: 4-bit masks train loss differences (C ≈ G) but does NOT mask MMLU differences (G > C).
     The ceiling affects loss sensitivity but not underlying weight distribution.
