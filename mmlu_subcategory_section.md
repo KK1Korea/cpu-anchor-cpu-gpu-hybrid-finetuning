@@ -53,3 +53,5 @@ Full per-subject scores for all 57 MMLU subjects are available in the repository
 ### One more question
 
 If the selective improvement in understanding and judgment is real — does it extend to long-context coherence? A model that genuinely "understands" should maintain context over thousands of tokens better than one relying on pattern matching. Needle-in-a-haystack and multi-turn consistency tests could reveal differences that MMLU's short-form questions cannot capture.
+
+If CPU anchoring genuinely separates 'what to learn precisely' from 'what to interpolate' — what happens when the training data itself is structured that way? Anchor-type data (clear definitions, boundaries) for the CPU phase, interpolation-type data (contextual reasoning, nuance) for the GPU phase. Does deliberate data separation amplify the effect beyond hardware switching alone?
