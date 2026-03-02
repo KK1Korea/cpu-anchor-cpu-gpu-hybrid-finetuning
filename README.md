@@ -229,9 +229,9 @@ Trained LoRA adapters are hosted on HuggingFace:
 
 | Experiment | Description | Status | Reason |
 |---|---|---|---|
-| A | GPU-only 500 steps | ✅ Done | Baseline |
+| A | GPU-bf16-only 500 steps | ✅ Done | Baseline |
 | B | CPU-only 500 steps | ⬜ Not run | ~21 hours on laptop CPU |
-| C | CPU 100 → GPU 400 | ✅ Done | Hybrid |
+| C | CPU-fp32 100 → GPU-bf16 400 | ✅ Done | Hybrid |
 | D | CPU 15% → GPU 85% | ⬜ Not run | Equipment limitation |
 | E | GPU → CPU (reverse) | ⬜ Not run | Equipment limitation |
 | F | GPU fp32-only 500 steps | ⬜ Not run | Isolates precision vs. determinism |
