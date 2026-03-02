@@ -11,7 +11,7 @@
 
 The entire AI industry trains models exclusively on GPUs. Nobody has asked: *"What if the first 20% of fine-tuning was done on CPU?"*
 
-This project demonstrates that CPU fp32 deterministic training creates a precise "anchor point" in parameter space, and subsequent GPU bf16 training explores within that anchor's basin — never escaping it.
+This project demonstrates that CPU deterministic computation creates a precise "anchor point" in parameter space, and subsequent GPU training explores within that anchor's basin — never escaping it.
 
 **Key result:** With identical hyperparameters, identical data, and identical model, simply changing *where* the first 20% of training runs produces 22.5% lower training loss while maintaining equivalent MMLU benchmark performance.
 
