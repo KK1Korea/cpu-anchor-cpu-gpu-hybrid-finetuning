@@ -102,17 +102,19 @@ The industry treats CPU as "slow GPU." Nobody uses CPU for training quality. We 
 
 | Training Phase | Hardware | Precision | Role |
 |---|---|---|---|
-| Pre-training | GPU 100% | bf16 | Maximum exploration (jellyfish mode) |
-| **Fine-tuning** | **CPU 20% → GPU 80%** | **fp32 → bf16** | **Anchor + Exploration** |
+| Pre-training | GPU 100% | varies | Maximum exploration (jellyfish mode) |
+| **Fine-tuning** | **CPU 20% → GPU 80%** | **fp32+ → varies** | **Anchor + Exploration** |
 | Inference | GPU 100% | varies | Execute established pathways |
 
 **Why 20%?** Derived from the Prime Number Theorem: 1/ln(100) ≈ 21.71%. This independently converges with the biological ratio of central nervous system to total body mass (~2% brain, ~20% including spinal cord infrastructure).
 
 **Why CPU?**
-- CPU fp32: Deterministic. Same input → same output. Always.
-- GPU bf16: Non-deterministic. Same input → different output each time. (Parallel reduction order, cuDNN kernel selection, atomic operations)
+- CPU fp32 (or higher): Deterministic. Same input → same output. Always.
+- GPU: Non-deterministic. Same input → different output each time. (Parallel reduction order, cuDNN kernel selection, atomic operations)
 
 The anchor requires **determinism + precision**. GPU fp32 provides precision but not determinism. Only CPU provides both.
+
+**Why does GPU Phase2 precision matter?** Experiment G showed that CPU anchor + GPU fp32 outperformed CPU anchor + GPU bf16 in all MMLU categories, despite identical train loss. The anchor determines *what* the model learns; Phase2 precision determines *how clearly* that knowledge is expressed. Higher GPU precision preserves more of the anchor's benefit — the model's "synaptic clarity."
 
 **Industry implication:** The current trend of lowering training precision (fp32 → bf16 → fp8 → fp4) for speed may be silently degrading model knowledge quality in ways that train loss cannot detect. Experiment G shows that even the bf16 → fp32 difference, invisible in train loss, changes what the model knows.
 
