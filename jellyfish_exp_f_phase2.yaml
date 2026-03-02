@@ -1,0 +1,45 @@
+### Experiment F Phase 2: GPU bf16 Exploration (400 steps)
+### Resume from GPU fp32 anchor (Phase1)
+### Identical to C Phase2 — only Phase1 origin differs
+
+### Model
+model_name_or_path: Qwen/Qwen2.5-7B-Instruct
+stage: sft
+do_train: true
+finetuning_type: lora
+template: qwen
+
+### LoRA (identical to A/C/G)
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.05
+lora_target: all
+
+### Dataset
+dataset: alpaca_en
+cutoff_len: 512
+
+### Training
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 4
+learning_rate: 1.0e-4
+lr_scheduler_type: cosine
+warmup_steps: 30
+max_steps: 500
+seed: 42
+
+### Quantization (identical to A/C/G)
+quantization_bit: 4
+
+### Precision: bf16 (identical to C Phase2)
+bf16: true
+
+### Resume from GPU fp32 anchor
+resume_from_checkpoint: saves/jellyfish_anchor_f/checkpoint-100
+
+### Output
+output_dir: saves/jellyfish_exp_f
+logging_steps: 10
+save_steps: 100
+save_total_limit: 2
+overwrite_output_dir: true
