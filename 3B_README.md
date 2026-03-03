@@ -92,9 +92,10 @@ Estimated time: ~20 min
 
 Estimated time: ~20 min each, ~60 min total
 
-**B (fp32 80%→bf16 20%) excluded — reason:**
+**B (fp32 80%→bf16 20%) — temporarily deferred:**
 - 400 steps of accumulated optimizer state + Phase4 "edge of stability" + precision switch = catastrophic perturbation risk
 - Analogy: Taking off glasses while walking a tightrope (vs. early transition = taking off glasses on flat ground)
+- May revisit after Round 1 results clarify transition dynamics
 
 ### Interpretation Matrix
 
