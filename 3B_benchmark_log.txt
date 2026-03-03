@@ -357,3 +357,103 @@ Project Jellyfish 🪼
       16-bit full: no benefit (train_loss worse, MMLU noise)
 
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BF-5] Exp AA: GPU fp32 → GPU bf16 — Continuous LR (Design Fix) — 2026-03-03
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  train_loss = 0.975 (ARTIFACT — same as BF-4)
+  Corrected Phase2 avg: 0.975 × (500/400) = 1.2188 ≈ Baseline 1.22
+  runtime = 19m 20s | sub-1.0 = Yes (0.9969, step 380)
+  → Step-by-step data: data.xlsx "Train Loss" sheet, AA column
+
+  ■ Design Fix — What Changed from Exp A:
+
+    Exp A (BF-4):  Phase1 max_steps=100, independent 100-step cosine
+                   → lr completed to ~0 by step 100
+                   → Phase2 resumed with new 500-step cosine → lr discontinuity
+
+    Exp AA (BF-5): Phase1 max_steps=500, save_steps=100, manually stopped after 100
+                   → lr followed 500-step cosine, saved scheduler state at step 100
+                   → Phase2 resumed same 500-step cosine → lr continuous
+
+    A  step 100 lr: 1.007e-08 (dead)  → Phase2 jump to 1.864e-05 (shock!)
+    AA step 100 lr: 1.896e-05 (alive) → Phase2 continues at 1.864e-05 (smooth)
+
+  ■ Phase1 (GPU fp32, steps 1-100, 500-step cosine):
+
+    step  10: loss 1.814  lr 6.000e-06    Baseline: 1.814  Δ  0.000
+    step  20: loss 1.813  lr 1.267e-05    Baseline: 1.813  Δ  0.000
+    step  30: loss 1.845  lr 1.933e-05    Baseline: 1.845  Δ  0.000
+    step  40: loss 1.558  lr 1.998e-05    Baseline: 1.558  Δ  0.000
+    step  50: loss 1.484  lr 1.992e-05    Baseline: 1.484  Δ  0.000
+    step  60: loss 1.395  lr 1.981e-05    Baseline: 1.395  Δ  0.000
+    step  70: loss 1.264  lr 1.966e-05    Baseline: 1.264  Δ  0.000
+    step  80: loss 1.137  lr 1.947e-05    Baseline: 1.137  Δ  0.000
+    step  90: loss 1.156  lr 1.923e-05    Baseline: 1.156  Δ  0.000
+    step 100: loss 1.141  lr 1.896e-05    Baseline: 1.141  Δ  0.000
+    → 10/10 identical to Baseline. Same 500-step cosine, same seed = same path.
+
+  ■ Phase2 (GPU bf16, steps 101-500, resumed 500-step cosine):
+
+    step 110: loss 1.293  lr 1.864e-05    Baseline: 1.294  Δ -0.001
+    step 120: loss 1.310  lr 1.828e-05    Baseline: 1.310  Δ  0.000
+    step 130: loss 1.189  lr 1.789e-05    Baseline: 1.189  Δ  0.000
+    step 140: loss 1.243  lr 1.746e-05    Baseline: 1.243  Δ  0.000
+    step 150: loss 1.175  lr 1.700e-05    Baseline: 1.175  Δ  0.000
+    step 160: loss 1.201  lr 1.651e-05    Baseline: 1.200  Δ +0.001
+    step 170: loss 1.219  lr 1.599e-05    Baseline: 1.219  Δ  0.000
+    step 180: loss 1.230  lr 1.544e-05    Baseline: 1.231  Δ -0.001
+    step 190: loss 1.157  lr 1.486e-05    Baseline: 1.156  Δ +0.001
+    step 200: loss 1.118  lr 1.427e-05    Baseline: 1.117  Δ +0.001
+    step 210: loss 1.252  lr 1.366e-05    Baseline: 1.251  Δ +0.001
+    step 220: loss 1.321  lr 1.303e-05    Baseline: 1.320  Δ +0.001
+    step 230: loss 1.279  lr 1.238e-05    Baseline: 1.279  Δ  0.000
+    step 240: loss 1.302  lr 1.173e-05    Baseline: 1.302  Δ  0.000
+    step 250: loss 1.281  lr 1.107e-05    Baseline: 1.281  Δ  0.000
+    step 260: loss 1.222  lr 1.040e-05    Baseline: 1.223  Δ -0.001
+    step 270: loss 1.246  lr 9.733e-06    Baseline: 1.246  Δ  0.000
+    step 280: loss 1.111  lr 9.066e-06    Baseline: 1.110  Δ +0.001
+    step 290: loss 1.246  lr 8.403e-06    Baseline: 1.246  Δ  0.000
+    step 300: loss 1.334  lr 7.747e-06    Baseline: 1.335  Δ -0.001
+    step 310: loss 1.203  lr 7.101e-06    Baseline: 1.203  Δ  0.000
+    step 320: loss 1.215  lr 6.468e-06    Baseline: 1.216  Δ -0.001
+    step 330: loss 1.349  lr 5.851e-06    Baseline: 1.347  Δ +0.002
+    step 340: loss 1.146  lr 5.253e-06    Baseline: 1.147  Δ -0.001
+    step 350: loss 1.226  lr 4.676e-06    Baseline: 1.226  Δ  0.000
+    step 360: loss 1.220  lr 4.122e-06    Baseline: 1.221  Δ -0.001
+    step 370: loss 1.194  lr 3.595e-06    Baseline: 1.195  Δ -0.001
+    step 380: loss 0.997  lr 3.096e-06    Baseline: 0.998  Δ -0.001
+    step 390: loss 1.174  lr 2.628e-06    Baseline: 1.174  Δ  0.000
+    step 400: loss 1.228  lr 2.194e-06    Baseline: 1.228  Δ  0.000
+    step 410: loss 1.334  lr 1.794e-06    Baseline: 1.334  Δ  0.000
+    step 420: loss 1.101  lr 1.430e-06    Baseline: 1.101  Δ  0.000
+    step 430: loss 1.129  lr 1.105e-06    Baseline: 1.129  Δ  0.000
+    step 440: loss 1.271  lr 8.198e-07    Baseline: 1.271  Δ  0.000
+    step 450: loss 1.273  lr 5.754e-07    Baseline: 1.273  Δ  0.000
+    step 460: loss 1.230  lr 3.732e-07    Baseline: 1.230  Δ  0.000
+    step 470: loss 1.201  lr 2.139e-07    Baseline: 1.201  Δ  0.000
+    step 480: loss 1.113  lr 9.836e-08    Baseline: 1.113  Δ  0.000
+    step 490: loss 1.149  lr 2.702e-08    Baseline: 1.148  Δ +0.001
+    step 500: loss 1.269  lr 2.234e-10    Baseline: 1.271  Δ -0.002
+
+    Max Δ: ±0.002 across all 40 Phase2 steps.
+    Transition shock: 0 (step 110 Δ = -0.001, vs Exp A's +0.036)
+
+  ■ FINDING — Precision Transition with Continuous LR = Zero Effect:
+
+    Exp A  (lr discontinuity): Phase2 avg +0.52% above Baseline (shock damage)
+    Exp AA (lr continuous):    Phase2 avg ±0.001 = identical to Baseline
+
+    Precision switch (fp32 → bf16) at step 100 with continuous lr schedule
+    produces ZERO measurable effect on training loss. This is the 3rd independent
+    confirmation of bf16 = fp32:
+      1st: A-1 vs Baseline (full 500-step, Δ ≤ 0.002)
+      2nd: Exp A Phase2 convergence (step 300+, Δ ≤ 0.003)
+      3rd: Exp AA continuous lr (all steps, Δ ≤ 0.002) ★ cleanest proof
+
+    Exp A's transition shock (+0.154) and Phase2 deficit (+0.52%) were caused
+    entirely by lr schedule discontinuity, not by precision transition.
+
+  ■ Awaiting: Exp AA MMLU evaluation
+
+
