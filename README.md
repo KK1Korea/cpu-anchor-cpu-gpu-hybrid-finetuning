@@ -17,11 +17,18 @@
 > 3B experiments (branch: `3b-full-precision`) confirmed:
 > - bf16 = fp32 in steady-state training (Δ = 0.0002 over 500 steps)
 > - Precision staging with lr discontinuity: train_loss artifact, MMLU = noise (+0.07%)
-> - Experiment AA (continuous lr schedule) is in progress to isolate pure precision transition
+> - **Experiment AA (continuous lr schedule): precision transition = zero effect (±0.001)**
+> - 3× independent confirmation of bf16 = fp32 (full training, split training, continuous lr)
 >
 > The **CPU anchor hypothesis remains untested under correct conditions** — all CPU experiments
 > (C, G) had the same lr discontinuity. CPU determinism effects cannot be separated from
 > lr restart effects until continuous-lr CPU experiments are conducted.
+>
+> **However, 7B Phase1 data shows CPU determinism is real:**
+> Both GPU fp32 (Exp F) and CPU fp32 (Exp C/G) used the same flawed lr schedule,
+> yet CPU consistently reached deeper loss (step 40-100, CPU avg -0.82% below GPU).
+> Same precision, same lr, same seed — only determinism differs.
+> This controlled comparison is valid despite the lr design flaw.
 >
 > MMLU improvements in 7B (F, C, G > A) were direction-consistent but within stderr.
 > Whether these reflect genuine precision effects or lr restart (SGDR) effects is unknown.
