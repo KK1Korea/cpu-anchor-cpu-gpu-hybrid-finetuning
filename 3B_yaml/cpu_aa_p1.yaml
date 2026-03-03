@@ -1,0 +1,43 @@
+### Project Jellyfish - 3B Exp CPU-AA Phase1: CPU fp32 anchor (continuous lr)
+### Qwen2.5-3B-Instruct 16-bit full, CPU fp32, 500-step cosine
+### IMPORTANT: Run with CUDA_VISIBLE_DEVICES=-1 to force CPU-only
+### IMPORTANT: Stop manually (Ctrl+C) AFTER step 100 checkpoint is saved!
+
+### model
+model_name_or_path: Qwen/Qwen2.5-3B-Instruct
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.05
+lora_target: all
+
+### dataset
+dataset: alpaca_en
+template: qwen
+cutoff_len: 512
+preprocessing_num_workers: 16
+
+### output
+output_dir: saves/jellyfish_3b_anchor_cpu_aa
+logging_steps: 10
+save_steps: 100
+overwrite_output_dir: true
+save_total_limit: 5
+
+### train - CPU fp32
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 2.0e-5
+max_steps: 500
+lr_scheduler_type: cosine
+warmup_steps: 30
+bf16: false
+fp16: false
+seed: 5108
+
+### windows fix
+dataloader_num_workers: 0
