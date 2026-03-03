@@ -91,6 +91,7 @@ Estimated time: ~25 min each
 | Exp | Config | Direction | Position | Purpose |
 |-----|--------|-----------|----------|---------|
 | A | fp32→bf16 (20:80) | Downward | Early | Reproduce F (already verified in 7B) | ✅ Done (MMLU 69.37%, Δ+0.07% = noise) |
+| **AA** | **fp32→bf16 (20:80) cont.lr** | **Downward** | **Early** | **Design fix: continuous 500-step cosine** | **✅ Done (loss = Baseline ±0.001, MMLU pending)** |
 
 ⚠️ **train_loss Artifact Warning (applies to ALL Phase1/Phase2 split experiments):**
 
@@ -108,6 +109,11 @@ Reality:    Exp A ≈ Baseline in Phase2. No improvement.
 
 This artifact affects ALL split-training experiments (7B: Exp F/C/G, 3B: Exp A/C/D).
 The 7B "22% improvement" (JF series) is likely the same artifact.
+
+**Exp AA — Design Fix:** Exp A used independent 100-step cosine for Phase1 (lr drops to ~0),
+causing lr discontinuity at Phase2 resume. AA fixed this by using 500-step cosine for Phase1
+(manually stopped at step 100), so lr continues smoothly. Result: AA = Baseline ±0.001 across
+all 40 Phase2 steps. Exp A's +0.036 transition shock was 100% caused by lr discontinuity.
 
 **train_loss is NOT a valid comparison metric for split-training experiments.**
 MMLU is the only reliable cross-experiment comparison axis.
@@ -131,6 +137,8 @@ A-1 >> Baseline               → bf16 underperforms fp32. ✗ Rejected.
 Round 1 (MMLU-based only — train_loss comparison invalid due to artifact):
 A(MMLU) > Baseline(MMLU)      → lr restart improves generalization. ✗ Not observed (+0.07%, noise)
 A(MMLU) ≈ Baseline(MMLU)      → No transition benefit without quantization. ✅ CONFIRMED
+AA(loss) ≈ Baseline(loss)     → Precision transition with continuous lr = zero effect. ✅ CONFIRMED (±0.001)
+AA(MMLU) vs Baseline(MMLU)    → Final precision-only test. Pending.
 C(MMLU) vs A(MMLU)            → Direction effect. Pending.
 D(MMLU) vs A(MMLU)            → Recovery effect. Pending.
 ```
