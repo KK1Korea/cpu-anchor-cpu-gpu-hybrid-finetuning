@@ -90,7 +90,7 @@ Estimated time: ~25 min each
 
 | Exp | Config | Direction | Position | Purpose |
 |-----|--------|-----------|----------|---------|
-| A | fp32→bf16 (20:80) | Downward | Early | Reproduce F (already verified in 7B) | ✅ Done (see note below) |
+| A | fp32→bf16 (20:80) | Downward | Early | Reproduce F (already verified in 7B) | ✅ Done (MMLU 69.37%, Δ+0.07% = noise) |
 
 ⚠️ **train_loss Artifact Warning (applies to ALL Phase1/Phase2 split experiments):**
 
@@ -125,15 +125,14 @@ Estimated time: ~20 min each, ~60 min total
 
 ```
 Round 0:
-A-1 ≈ Baseline               → bf16 ≈ fp32 confirmed. Transition effect is real. ✅ CONFIRMED (Δ=0.0002)
-A-1 >> Baseline               → bf16 underperforms fp32. 4-bit QLoRA masked the gap. ✗ Rejected.
+A-1 ≈ Baseline               → bf16 ≈ fp32 confirmed. ✅ CONFIRMED (Δ=0.0002)
+A-1 >> Baseline               → bf16 underperforms fp32. ✗ Rejected.
 
-Round 1:
-A < Baseline, C ≈ Baseline          → Only "early precision + transition" combo works. Order is everything.
-A < Baseline, C < Baseline          → "Transition itself" is regularization. Direction irrelevant.
-D > A                               → Late fp32 recovery effect exists.
-D ≈ A                               → Late precision irrelevant. Only early phase matters.
-D < A                               → Second transition interferes (inertia collision).
+Round 1 (MMLU-based only — train_loss comparison invalid due to artifact):
+A(MMLU) > Baseline(MMLU)      → lr restart improves generalization. ✗ Not observed (+0.07%, noise)
+A(MMLU) ≈ Baseline(MMLU)      → No transition benefit without quantization. ✅ CONFIRMED
+C(MMLU) vs A(MMLU)            → Direction effect. Pending.
+D(MMLU) vs A(MMLU)            → Recovery effect. Pending.
 ```
 
 ### Round 2 — Long-Context Benchmark (New Addition)
