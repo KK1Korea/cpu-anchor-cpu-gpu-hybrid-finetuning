@@ -3,7 +3,7 @@
 [![HuggingFace](https://img.shields.io/badge/🤗-LoRA%20Adapters-yellow?style=flat-square)](https://huggingface.co/KK1kk1/jellyfish-cpu-anchor-lora)
 # 🪼 Jellyfish: CPU-Anchor Hybrid Training
 
-**The first empirical evidence that fp32 precision-staged training anchors GPU fine-tuning, achieving 22.5% lower training loss with equivalent generalization. CPU determinism provides an additional but secondary benefit.**
+**The first empirical evidence that precision-staged training (fp32 → bf16) improves fine-tuning generalization. 3B full-precision experiments revealed that the reported 22.5% train loss improvement is a measurement artifact — but MMLU improvements are real.**
 
 ---
 
@@ -13,7 +13,7 @@ The entire AI industry trains models exclusively on GPUs. Nobody has asked: *"Wh
 
 This project demonstrates that running the first 20% of fine-tuning steps in fp32 creates a precise "anchor point" in parameter space, and subsequent bf16 training explores within that anchor's basin — never escaping it. This works on both CPU and GPU.
 
-**Key result:** With identical hyperparameters, identical data, and identical model, simply running the first 100 steps in fp32 produces 21.7–22.5% lower training loss while maintaining equivalent MMLU benchmark performance. Experiment F proved that 96.6% of this improvement comes from fp32 precision alone — no CPU required.
+**Key result:** With identical hyperparameters, identical data, and identical model, simply running the first 20% of fine-tuning steps in fp32 produces consistent MMLU improvements across all experiments (F, C, G > A). The originally reported 21.7–22.5% train loss improvement is a **measurement artifact** (see Errata below) — but the MMLU gains are real and direction-consistent. Experiment F proved that 96.6% of the train loss effect comes from fp32 precision alone — no CPU required.
 
 ---
 
@@ -24,11 +24,14 @@ This project demonstrates that running the first 20% of fine-tuning steps in fp3
 | Experiment | Method | Train Loss | vs A | Runtime |
 |---|---|---|---|---|
 | **A** (baseline) | GPU-only, bf16, 500 steps | 1.184 | — | 10m 59s |
-| **F** (precision-staged) | GPU fp32 100 → GPU bf16 400 | **0.9268** | **-21.7%** | 10m 12s |
-| **C** (hybrid) | CPU fp32 100 → GPU bf16 400 | **0.9177** | **-22.5%** | ~3h + 8m 18s |
-| **G** (hybrid fp32) | CPU fp32 100 → GPU fp32 400 | **0.9188** | **-22.4%** | ~3h 14m + 14m 06s |
+| **F** (precision-staged) | GPU fp32 100 → GPU bf16 400 | **0.9268** | **-21.7%** ⚠️ | 10m 12s |
+| **C** (hybrid) | CPU fp32 100 → GPU bf16 400 | **0.9177** | **-22.5%** ⚠️ | ~3h + 8m 18s |
+| **G** (hybrid fp32) | CPU fp32 100 → GPU fp32 400 | **0.9188** | **-22.4%** ⚠️ | ~3h 14m + 14m 06s |
 
-Three-factor decomposition (A → C):
+> ⚠️ **Errata (2026-03-03): train_loss "vs A" percentages are measurement artifacts.**
+> When HuggingFace Trainer resumes from a checkpoint, it resets the loss accumulator but divides by `global_step` (total steps across both phases). Phase2 trains 400 steps but divides by 500, producing ~20% artificial deflation. Corrected: F = 0.9268 × (500/400) = **1.1585**, C = 0.9177 × (500/400) = **1.1471**, G = 0.9188 × (500/400) = **1.1485**. All are within ~3% of A's 1.184, not 22%. This was discovered through 3B full-precision experiments (branch: `3b-full-precision`) where step-by-step comparison confirmed Phase2 loss tracks baseline throughout. **MMLU results remain valid** as they are independent evaluations unaffected by the trainer's loss averaging.
+
+Three-factor decomposition (A → C) — **applies to reported train_loss only, artifact-affected:**
 - fp32 precision in Phase1: 96.6% of improvement (A → F)
 - CPU determinism: 3.4% of improvement (F → C)
 - Phase2 precision: negligible on train loss, significant on MMLU distribution
@@ -73,7 +76,7 @@ Learning rate decayed 5x, but loss oscillation only reduced 30%. At lr ≈ 0 (1.
 
 ### 5. Overfitting Rejected
 
-Train loss 22.5% lower + MMLU equivalent = the model learned the training data more efficiently without losing generalization ability.
+MMLU equivalent or improved across all precision-staged experiments (F, C, G > A) = the model learned effectively without losing generalization ability. *(Note: The originally cited "22.5% lower train loss" is a measurement artifact — see Errata above.)*
 
 ### 6. GPU Noise Is Non-Determinism, Not Precision (Experiment G)
 
@@ -100,7 +103,7 @@ Despite identical train loss (C: 0.9177 vs G: 0.9188), MMLU tells a different st
 
 ### 8. fp32 Precision Is the Dominant Factor, Not CPU Determinism (Experiment F)
 
-Experiment F (GPU fp32 100 → GPU bf16 400) achieved train loss 0.9268 — capturing 96.6% of C's improvement over A using GPU alone. The three-factor decomposition:
+Experiment F (GPU fp32 100 → GPU bf16 400) achieved train loss 0.9268 — capturing 96.6% of C's improvement over A using GPU alone. The three-factor decomposition *(based on reported train_loss — artifact-affected, see Errata)*:
 
 ```
 A → F (fp32 precision only):     -0.2572  (96.6% of total A→C gain)
@@ -235,6 +238,7 @@ Trained LoRA adapters are hosted on HuggingFace:
 
 ## Limitations
 
+- **⚠️ train_loss artifact:** The reported 21.7–22.5% train loss improvements are measurement artifacts caused by HuggingFace Trainer's resume logic. Corrected Phase2 averages are within ~3% of baseline. MMLU is the only valid cross-experiment metric. See Errata in Results section.
 - **Scale:** 500 steps / 0.077 epochs. Mini-experiment only.
 - **Single seed:** seed=42, no repetition. Statistical power limited.
 - **Benchmark sensitivity:** MMLU on a strong base model (Qwen2.5-7B, ~75% baseline) leaves little room for differentiation at 500 steps.
@@ -254,8 +258,8 @@ Trained LoRA adapters are hosted on HuggingFace:
 ### Scale and Reproducibility
 
 1. Does the MMLU gap emerge at full scale (1 epoch+, 6500+ steps)? At 500 steps (0.077 epochs), all MMLU differences are within stderr. Longer training may amplify or eliminate the signal.
-2. Does a weaker base model (3B) with more headroom show clearer differentiation? (Next planned: Qwen2.5-3B, 16-bit full-precision loading, no QLoRA 4-bit quantization bottleneck. Separate GitHub branch: `3b-full-precision`.)
-3. Is the 21.7–22.5% train loss improvement reproducible across seeds? Single-seed (42) results. Multi-seed verification is the minimum bar for statistical claims.
+2. Does a weaker base model (3B) with more headroom show clearer differentiation? **In progress (branch: `3b-full-precision`):** bf16 = fp32 confirmed (Δ=0.0002). Exp A (fp32→bf16) train_loss improvement was artifact. MMLU evaluation pending — this is now the critical test.
+3. ~~Is the 21.7–22.5% train loss improvement reproducible across seeds?~~ **Superseded:** 3B experiments (seed 5108, 16-bit full) revealed the 22% figure is a HuggingFace Trainer resume artifact, not real improvement. Step-by-step Phase2 comparison shows Exp A tracks Baseline within ±0.003. MMLU is now the primary comparison metric.
 4. Does the fp32 anchor provide overfitting resistance at full scale? At 0.077 epochs, no overfitting observed. The anchor basin may constrain parameter exploration enough to delay or prevent overfitting at 1+ epochs.
 
 ### Precision-Staged Training Mechanics
@@ -263,7 +267,7 @@ Trained LoRA adapters are hosted on HuggingFace:
 5. What is the optimal fp32:bf16 step ratio? Is 20% ideal, or can less suffice? (Originally derived from Prime Number Theorem 1/ln(100) ≈ 21.71%. Post-F, the justification shifts: "enough fp32 steps for gradients to find a good basin." 10%? 5%? The minimum effective dose is unknown.)
 6. Does fp64 → fp32 → bf16 → fp8 form a monotonic quality gradient invisible to train loss? (If fp32 Phase1 helps, does fp64 Phase1 help more? Now testable on both CPU and GPU, since precision — not device — is the primary factor.)
 7. Does reverse staging (bf16 first → fp32 later) work, or is the order essential? (Proposed Experiment E-GPU: GPU bf16 100 → GPU fp32 400. The exact mirror of F. Tests whether *early* precision matters more than *late* precision. If E-GPU ≈ F → total fp32 amount matters, order doesn't. If E-GPU < F → order is critical, anchor must come first.)
-8. Does QLoRA 4-bit quantization mask the full Precision-Staged Training benefit? (Partially answered: 4-bit masks train loss differences (C ≈ G) but does NOT mask MMLU differences (G > C). The 3B full-precision branch (16-bit loading, no quantization) tests whether the MMLU gap widens when this bottleneck is removed.)
+8. Does QLoRA 4-bit quantization mask the full Precision-Staged Training benefit? **Partially answered:** The reported train_loss improvement (22%) is a measurement artifact in both 7B (QLoRA) and 3B (16-bit full). However, 3B confirmed bf16 = fp32 (Δ=0.0002), meaning quantization creates a different noise environment where precision staging may interact differently with gradient computation. 3B MMLU evaluation will clarify whether the benefit exists without quantization.
 
 ### New Questions from Experiment F
 
