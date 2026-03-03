@@ -1,0 +1,42 @@
+### Project Jellyfish 🪼 — 3B Baseline-bf16 (GPU bf16 100%)
+### Branch: 3b-full-precision
+### Purpose: bf16 baseline — Industry standard. Direct comparison with fp32 baseline.
+### THE question: "How much does the industry lose by using bf16?"
+
+### Model
+model_name_or_path: Qwen/Qwen2.5-3B-Instruct
+
+### Method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.05
+lora_target: all
+
+### Dataset
+dataset: alpaca_en
+template: qwen
+cutoff_len: 512
+
+### Training
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+max_steps: 500
+learning_rate: 2.0e-5
+lr_scheduler_type: cosine
+warmup_steps: 30
+seed: 5108
+
+### Precision — bf16 (industry standard)
+bf16: true
+
+### Logging
+logging_steps: 10
+save_steps: 100
+save_total_limit: 5
+
+### Output
+output_dir: saves/jellyfish_3b_baseline_bf16
+overwrite_output_dir: true

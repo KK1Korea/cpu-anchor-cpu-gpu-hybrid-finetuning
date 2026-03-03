@@ -1,0 +1,42 @@
+### Project Jellyfish 🪼 — 3B Exp A Phase 1: GPU fp32 (20%)
+### Branch: 3b-full-precision
+### Purpose: fp32 anchor — first 100 steps in fp32, then switch to bf16
+### ⚠️ Anchor checkpoint saved in separate folder to prevent Phase2 deletion
+
+### Model
+model_name_or_path: Qwen/Qwen2.5-3B-Instruct
+
+### Method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.05
+lora_target: all
+
+### Dataset
+dataset: alpaca_en
+template: qwen
+cutoff_len: 512
+
+### Training — GPU fp32 anchor phase
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+max_steps: 100
+learning_rate: 2.0e-5
+lr_scheduler_type: cosine
+warmup_steps: 30
+seed: 5108
+
+### Precision — fp32 (NO bf16, NO fp16)
+### PyTorch defaults to fp32 when neither is specified
+
+### Logging
+logging_steps: 10
+save_steps: 100
+save_total_limit: 2
+
+### Output — Anchor folder (separate from Phase2 → deletion-proof)
+output_dir: saves/jellyfish_3b_anchor_a
+overwrite_output_dir: true
