@@ -79,7 +79,7 @@ Any model that passes through fp32 Phase1 — CPU or GPU, Phase2 bf16 or fp32 �
 | Exp | Config | Purpose | Status |
 |-----|--------|---------|--------|
 | A-1 | GPU bf16 500 steps 100% | Floor reference | ✅ Done (train_loss = 1.267) |
-| Baseline | GPU fp32 500 steps 100% | Ceiling reference | ✅ Done (train_loss = 1.2672) |
+| Baseline | GPU fp32 500 steps 100% | Ceiling reference | ✅ Done (train_loss = 1.2672, MMLU = 69.30%) |
 
 **Result: bf16 = fp32 confirmed.** Δ = 0.0002 across 500 steps. Max per-step diff ≤ 0.002.
 There is no ceiling/floor gap — they are identical.
@@ -90,7 +90,27 @@ Estimated time: ~25 min each
 
 | Exp | Config | Direction | Position | Purpose |
 |-----|--------|-----------|----------|---------|
-| A | fp32→bf16 (20:80) | Downward | Early | Reproduce F (already verified in 7B) |
+| A | fp32→bf16 (20:80) | Downward | Early | Reproduce F (already verified in 7B) | ✅ Done (see note below) |
+
+⚠️ **train_loss Artifact Warning (applies to ALL Phase1/Phase2 split experiments):**
+
+When training resumes from a checkpoint (Phase2), HuggingFace Trainer resets the
+loss accumulator but divides by `global_step` (total steps from both phases).
+This means Phase2-only loss is divided by the full 500 steps instead of the actual
+400 steps trained in Phase2.
+
+```
+Reported:   Exp A train_loss = 0.9801  (-22.7% vs Baseline)
+Corrected:  0.9801 × (500/400) = 1.2251  (Phase2 actual average)
+Baseline:   step 101-500 average ≈ 1.22
+Reality:    Exp A ≈ Baseline in Phase2. No improvement.
+```
+
+This artifact affects ALL split-training experiments (7B: Exp F/C/G, 3B: Exp A/C/D).
+The 7B "22% improvement" (JF series) is likely the same artifact.
+
+**train_loss is NOT a valid comparison metric for split-training experiments.**
+MMLU is the only reliable cross-experiment comparison axis.
 | C | bf16→fp32 (20:80) | Upward | Early | Reverse transition effect |
 | D | fp32→bf16→fp32 (20:40:40) | Down then up | Double | Recovery effect |
 
@@ -191,7 +211,7 @@ Sheet 8: Long-Context    — RULER/Multi-hop results + length-wise charts
 | Model download | Qwen2.5-3B-Instruct | ~5 min | ✅ Done |
 | A-1 | GPU bf16 100% 500 steps | ~25 min | ✅ Done (1.267) |
 | Baseline | GPU fp32 100% 500 steps | ~23 min | ✅ Done (1.2672) |
-| Round 1 (A, C, D) | 3 transition experiments | ~60 min | Pending |
+| Round 1 (A, C, D) | 3 transition experiments | ~60 min | A ✅ Done (19m), C/D Pending |
 | MMLU evaluation × 4+ | 57-subject evaluation | ~40 min | Pending |
 | Long-Context evaluation | RULER + Multi-hop | ~30 min | Pending |
 | **Total** | | **~3 hours** |
