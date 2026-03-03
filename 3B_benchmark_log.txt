@@ -153,6 +153,170 @@ Project Jellyfish 🪼
     - This is the first known bf16 vs fp32 full-training comparison with
       identical seed on the same LLM (no quantization, pure bf16 vs pure fp32).
 
-  ■ Awaiting: Baseline MMLU evaluation (comparison target for Exp A)
+  ■ Baseline MMLU Results:
+    Overall = 69.30% (±0.0046)
+    ┌───────────────────┬──────────────────┐
+    │ humanities        │ 69.88% (±0.0091) │
+    │ social_sciences   │ 78.35% (±0.0090) │
+    │ other             │ 69.51% (±0.0096) │
+    │ stem              │ 61.91% (±0.0090) │
+    └───────────────────┴──────────────────┘
+    → Full 57-subject data: data.xlsx "MMLU Raw" sheet
+
+  ■ 3B vs 7B Headroom:
+    7B baseline MMLU: 76.25% → ceiling ~77%, headroom ~1.5%
+    3B baseline MMLU: 69.30% → ceiling ~77%, headroom ~7%+
+    → 3B has 5x more room for transition effect to show in MMLU
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BF-4] Exp A: GPU fp32 → GPU bf16 (20:80) — 2026-03-03
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  train_loss = 0.9801 (ARTIFACT — see below) | runtime = 19m 07s | sub-1.0 = Yes (0.9995, step 380)
+  → Corrected Phase2 avg: 0.9801 × (500/400) = 1.2251 ≈ Baseline 1.22
+  → Step-by-step data: data.xlsx "Train Loss" sheet, A column
+
+  ■ Exp A vs Baseline vs A-1 Comparison:
+    ┌──────────────────────┬───────────┬────────────┬────────────┐
+    │                      │ A-1(bf16) │ Base(fp32) │ A(fp32→bf16)│
+    ├──────────────────────┼───────────┼────────────┼────────────┤
+    │ train_loss (reported)│     1.267 │     1.2672 │     0.9801 │
+    │ train_loss (actual) │     1.267 │     1.2672 │    ~1.2251*│
+    │ * Phase2 corrected: 0.9801 × (500/400). HF Trainer resume artifact. │
+    │ vs Baseline          │   +0.0002 │   baseline │  artifact  │
+    │ sub-1.0 step         │ 380(0.997)│ 380(0.998) │ 380(0.9995)│
+    │ runtime              │  24m 42s  │  23m 22s   │  19m 07s   │
+    └──────────────────────┴───────────┴────────────┴────────────┘
+
+  ■ Phase 1 (GPU fp32, 100 steps):
+    step  10: loss 1.814  lr 6.000e-06
+    step  20: loss 1.813  lr 1.267e-05
+    step  30: loss 1.845  lr 1.933e-05
+    step  40: loss 1.558  lr 1.920e-05
+    step  50: loss 1.488  lr 1.658e-05
+    step  60: loss 1.400  lr 1.266e-05
+    step  70: loss 1.277  lr 8.214e-06
+    step  80: loss 1.155  lr 4.122e-06
+    step  90: loss 1.182  lr 1.194e-06
+    step 100: loss 1.176  lr 1.007e-08  ← lr completed to ~0
+
+  ■ Phase 1 → Phase 2 Transition:
+    Phase1 final (step 100): loss 1.176 (lr ≈ 0)
+    Phase2 first  (step 110): loss 1.330 (lr = 1.864e-05)
+    Transition shock: +0.154
+
+    7B transition shock was +0.017. 3B shock is 9x larger.
+    Cause: Phase1 cosine completes in 100 steps → lr drops to ~0.
+    Phase2 resumes 500-step cosine at step 100 position → lr jumps to 1.864e-05.
+    The shock is lr discontinuity, not precision transition.
+
+  ■ Phase 2 (GPU bf16, 400 steps):
+    step 110: loss 1.330  lr 1.864e-05
+    step 120: loss 1.339  lr 1.828e-05
+    step 130: loss 1.211  lr 1.789e-05
+    step 140: loss 1.260  lr 1.746e-05
+    step 150: loss 1.193  lr 1.700e-05
+    step 160: loss 1.214  lr 1.651e-05
+    step 170: loss 1.229  lr 1.599e-05
+    step 180: loss 1.239  lr 1.544e-05
+    step 190: loss 1.164  lr 1.486e-05
+    step 200: loss 1.124  lr 1.427e-05
+    step 210: loss 1.256  lr 1.366e-05
+    step 220: loss 1.324  lr 1.303e-05
+    step 230: loss 1.283  lr 1.238e-05
+    step 240: loss 1.305  lr 1.173e-05
+    step 250: loss 1.283  lr 1.107e-05
+    step 260: loss 1.226  lr 1.040e-05
+    step 270: loss 1.250  lr 9.733e-06
+    step 280: loss 1.114  lr 9.066e-06
+    step 290: loss 1.250  lr 8.403e-06
+    step 300: loss 1.338  lr 7.747e-06
+    step 310: loss 1.205  lr 7.101e-06
+    step 320: loss 1.217  lr 6.468e-06
+    step 330: loss 1.352  lr 5.851e-06
+    step 340: loss 1.150  lr 5.253e-06
+    step 350: loss 1.229  lr 4.676e-06
+    step 360: loss 1.223  lr 4.122e-06
+    step 370: loss 1.195  lr 3.595e-06
+    step 380: loss 0.9995 lr 3.096e-06  ← sub-1.0
+    step 390: loss 1.177  lr 2.628e-06
+    step 400: loss 1.231  lr 2.194e-06
+    step 410: loss 1.337  lr 1.794e-06
+    step 420: loss 1.105  lr 1.430e-06
+    step 430: loss 1.131  lr 1.105e-06
+    step 440: loss 1.274  lr 8.198e-07
+    step 450: loss 1.275  lr 5.754e-07
+    step 460: loss 1.232  lr 3.732e-07
+    step 470: loss 1.203  lr 2.139e-07
+    step 480: loss 1.116  lr 9.836e-08
+    step 490: loss 1.150  lr 2.702e-08
+    step 500: loss 1.272  lr 2.234e-10
+
+  ■ Step-by-Step Exp A vs Baseline Comparison (Phase2):
+
+    step 110: A 1.330  Base 1.294  Δ +0.036  ← shock residual
+    step 120: A 1.339  Base 1.310  Δ +0.029
+    step 130: A 1.211  Base 1.189  Δ +0.022
+    step 140: A 1.260  Base 1.243  Δ +0.017
+    step 150: A 1.193  Base 1.175  Δ +0.018
+    step 160: A 1.214  Base 1.200  Δ +0.014
+    step 170: A 1.229  Base 1.219  Δ +0.010
+    step 180: A 1.239  Base 1.231  Δ +0.008
+    step 190: A 1.164  Base 1.156  Δ +0.008
+    step 200: A 1.124  Base 1.117  Δ +0.007
+    step 250: A 1.283  Base 1.281  Δ +0.002
+    step 300: A 1.338  Base 1.335  Δ +0.003
+    step 350: A 1.229  Base 1.226  Δ +0.003
+    step 400: A 1.231  Base 1.228  Δ +0.003
+    step 450: A 1.275  Base 1.273  Δ +0.002
+    step 500: A 1.272  Base 1.271  Δ +0.001
+
+    Exp A NEVER dropped below Baseline in Phase2.
+    Gap narrowed from +0.036 to +0.001 but remained positive throughout.
+
+  ■ CRITICAL FINDING — train_loss -22.7% Is a Measurement Artifact:
+
+    The -22.7% comes from how PyTorch trainer computes train_loss (average of ALL steps).
+
+    Phase1 cosine completes in 100 steps:
+      → lr drops to ~0 by step 70-100
+      → loss at steps 70-100: 1.155~1.182 (low, but model stopped learning)
+      → These artificially low Phase1 values pull the overall average down
+
+    Baseline cosine spans 500 steps:
+      → lr at steps 70-100 still 1.947~1.966e-05 (active learning)
+      → loss at steps 70-100: 1.137~1.264 (similar range, but lr still high)
+      → No artificially low "stalled" steps
+
+    Step-by-step Phase2 truth: Exp A is consistently ABOVE Baseline (+0.001~+0.036).
+    The transition PROVIDED NO BENEFIT — it caused shock and permanent (tiny) deficit.
+
+    7B's -22.5% must be re-examined:
+      → 7B Phase1 also used 100-step cosine → same averaging artifact
+      → BUT 7B had QLoRA 4-bit → precision×quantization interaction may have
+        created REAL Phase2 improvement that 3B doesn't have
+      → 7B step-by-step data for Exp A (GPU-only) was not fully logged (JF-2),
+        making direct Phase2 comparison impossible
+
+  ■ FINDING — Transition Effect Without Quantization = No Real Improvement:
+
+    3B (16-bit full, no quantization):
+      bf16 = fp32 confirmed (BF-3)
+      fp32→bf16 transition = no Phase2 improvement, only shock damage
+      train_loss -22.7% is lr schedule artifact, not genuine improvement
+
+    7B (QLoRA 4-bit):
+      bf16 ≠ fp32 under quantization (inferred — not directly tested)
+      fp32→bf16 transition = -22.5% (artifact + possible real QLoRA interaction)
+      Needs 7B step-by-step A vs F Phase2 re-examination
+
+    Emerging hypothesis:
+      Precision-staged training benefit = f(quantization_level)
+      More quantization → more benefit from fp32 staging
+      No quantization → no benefit (possibly harmful due to lr shock)
+
+  ■ Awaiting: Exp A MMLU evaluation
+    MMLU may still show differences even if train_loss doesn't (as in 7B C vs G).
 
 
