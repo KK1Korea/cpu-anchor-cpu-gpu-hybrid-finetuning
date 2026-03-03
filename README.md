@@ -3,6 +3,29 @@
 [![HuggingFace](https://img.shields.io/badge/🤗-LoRA%20Adapters-yellow?style=flat-square)](https://huggingface.co/KK1kk1/jellyfish-cpu-anchor-lora)
 # 🪼 Jellyfish: CPU-Anchor Hybrid Training
 
+> ⚠️ **Design Flaw Discovered (2026-03-03)**
+>
+> All 7B experiments (F, C, G) used **independent cosine schedules** for Phase1 and Phase2.
+> Phase1 (`max_steps=100`) completed its own cosine cycle, dropping lr to ~0 by step 100.
+> Phase2 (`max_steps=500`, `resume_from_checkpoint`) started a new 500-step cosine at step 100 position,
+> causing an **lr discontinuity** (0 → 1.86e-5). This means every "transition" experiment
+> conflated two variables: **precision change + lr restart**.
+>
+> The reported 22% train_loss improvement is a **measurement artifact** (HF Trainer divides
+> Phase2-only loss by total global_steps). Corrected Phase2 averages are within ~3% of baseline.
+>
+> 3B experiments (branch: `3b-full-precision`) confirmed:
+> - bf16 = fp32 in steady-state training (Δ = 0.0002 over 500 steps)
+> - Precision staging with lr discontinuity: train_loss artifact, MMLU = noise (+0.07%)
+> - Experiment AA (continuous lr schedule) is in progress to isolate pure precision transition
+>
+> The **CPU anchor hypothesis remains untested under correct conditions** — all CPU experiments
+> (C, G) had the same lr discontinuity. CPU determinism effects cannot be separated from
+> lr restart effects until continuous-lr CPU experiments are conducted.
+>
+> MMLU improvements in 7B (F, C, G > A) were direction-consistent but within stderr.
+> Whether these reflect genuine precision effects or lr restart (SGDR) effects is unknown.
+
 **The first empirical evidence that precision-staged training (fp32 → bf16) improves fine-tuning generalization. 3B full-precision experiments revealed that the reported 22.5% train loss improvement is a measurement artifact — but MMLU improvements are real.**
 
 ---
