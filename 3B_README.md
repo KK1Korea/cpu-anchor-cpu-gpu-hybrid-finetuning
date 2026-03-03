@@ -74,13 +74,17 @@ Any model that passes through fp32 Phase1 — CPU or GPU, Phase2 bf16 or fp32 �
 
 ## 3B Experiment Design
 
-### Round 0 — Baseline
+### Round 0 — Pure Precision Baselines
 
-| Exp | Config | Purpose |
-|-----|--------|---------|
-| Baseline | GPU fp32 500 steps 100% | Ceiling reference |
+| Exp | Config | Purpose | Status |
+|-----|--------|---------|--------|
+| A-1 | GPU bf16 500 steps 100% | Floor reference | ✅ Done (train_loss = 1.267) |
+| Baseline | GPU fp32 500 steps 100% | Ceiling reference | ✅ Done (train_loss = 1.2672) |
 
-Estimated time: ~20 min
+**Result: bf16 = fp32 confirmed.** Δ = 0.0002 across 500 steps. Max per-step diff ≤ 0.002.
+There is no ceiling/floor gap — they are identical.
+
+Estimated time: ~25 min each
 
 ### Round 1 — Precision Transition (Single transition, direction/position test)
 
@@ -100,8 +104,13 @@ Estimated time: ~20 min each, ~60 min total
 ### Interpretation Matrix
 
 ```
-A < baseline, C ≈ baseline          → Only "early precision + transition" combo works. Order is everything.
-A < baseline, C < baseline          → "Transition itself" is regularization. Direction irrelevant.
+Round 0:
+A-1 ≈ Baseline               → bf16 ≈ fp32 confirmed. Transition effect is real. ✅ CONFIRMED (Δ=0.0002)
+A-1 >> Baseline               → bf16 underperforms fp32. 4-bit QLoRA masked the gap. ✗ Rejected.
+
+Round 1:
+A < Baseline, C ≈ Baseline          → Only "early precision + transition" combo works. Order is everything.
+A < Baseline, C < Baseline          → "Transition itself" is regularization. Direction irrelevant.
 D > A                               → Late fp32 recovery effect exists.
 D ≈ A                               → Late precision irrelevant. Only early phase matters.
 D < A                               → Second transition interferes (inertia collision).
@@ -147,17 +156,17 @@ Only 1 axis improves → Training trick level
 
 ## Data Management
 
-### benchmark_log.txt (Concise)
+### 3B_benchmark_log.txt (Concise)
 
 ```
-=== JF-11: 3B Baseline (GPU fp32 100%) ===
-Date: 2026-03-XX
+=== BF-2: 3B A-1 (GPU bf16 100%) ===
+Date: 2026-03-03
 Model: Qwen2.5-3B-Instruct, 16-bit full loading
-Steps: 500, lr: 2e-5
-Train loss: X.XXXX
-MMLU: XX.XX%
-Long-context RULER: XX.XX%
-→ Detailed data: data.xlsx Sheet "JF-11"
+Steps: 500, lr: 2e-5, seed: 5108
+Train loss: 1.267
+sub-1.0: Yes (0.9967, step 380)
+MMLU: pending
+→ Detailed data: data.xlsx Sheet "Train Loss"
 ```
 
 ### data.xlsx (All Data)
@@ -177,14 +186,15 @@ Sheet 8: Long-Context    — RULER/Multi-hop results + length-wise charts
 
 ## Estimated Timeline
 
-| Phase | Content | Time |
-|-------|---------|------|
-| Model download | Qwen2.5-3B-Instruct | ~5 min |
-| Baseline | GPU fp32 100% 500 steps | ~20 min |
-| Round 1 (A, C, D) | 3 transition experiments | ~60 min |
-| MMLU evaluation × 4 | 57-subject evaluation | ~40 min |
-| Long-Context evaluation | RULER + Multi-hop | ~30 min |
-| **Total** | | **~2.5 hours** |
+| Phase | Content | Time | Status |
+|-------|---------|------|--------|
+| Model download | Qwen2.5-3B-Instruct | ~5 min | ✅ Done |
+| A-1 | GPU bf16 100% 500 steps | ~25 min | ✅ Done (1.267) |
+| Baseline | GPU fp32 100% 500 steps | ~23 min | ✅ Done (1.2672) |
+| Round 1 (A, C, D) | 3 transition experiments | ~60 min | Pending |
+| MMLU evaluation × 4+ | 57-subject evaluation | ~40 min | Pending |
+| Long-Context evaluation | RULER + Multi-hop | ~30 min | Pending |
+| **Total** | | **~3 hours** |
 
 ---
 
