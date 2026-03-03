@@ -319,4 +319,41 @@ Project Jellyfish 🪼
   ■ Awaiting: Exp A MMLU evaluation
     MMLU may still show differences even if train_loss doesn't (as in 7B C vs G).
 
+  ■ Exp A MMLU Results:
+    Overall = 69.37% (±0.0046) vs Baseline 69.30% → +0.07%
+    ┌───────────────────┬──────────┬──────────┬─────────┐
+    │ Category          │ Baseline │  Exp A   │    Δ    │
+    ├───────────────────┼──────────┼──────────┼─────────┤
+    │ humanities        │  69.88%  │  69.74%  │  -0.14% │
+    │ social_sciences   │  78.35%  │  78.54%  │  +0.19% │
+    │ other             │  69.51%  │  69.56%  │  +0.05% │
+    │ stem              │  61.91%  │  62.06%  │  +0.15% │
+    │ Overall           │  69.30%  │  69.37%  │  +0.07% │
+    └───────────────────┴──────────┴──────────┴─────────┘
+    All differences within stderr (±0.46%). Statistically identical.
+    → Full 57-subject data: data.xlsx "MMLU Raw" sheet
+
+  ■ FINDING — Precision Staging Without Quantization = No MMLU Benefit:
+
+    3B (16-bit full, no quantization):
+      train_loss: artifact (reported -22.7%, actual +0.52% worse)
+      MMLU: +0.07% (noise, within stderr)
+      Conclusion: No benefit from precision staging in full-precision environment.
+
+    7B (QLoRA 4-bit):
+      train_loss: artifact (reported -21.7%, actual ~2% real improvement unconfirmed)
+      MMLU: +0.16% (F vs A) — also within stderr, but direction-consistent across F/C/G
+      Conclusion: Possible small benefit, but may require quantization environment.
+
+    Cross-comparison:
+      7B stderr: ±0.40%, 7B Δ: +0.16% (0.40x stderr)
+      3B stderr: ±0.46%, 3B Δ: +0.07% (0.15x stderr)
+      7B had 4 experiments all above baseline (direction-consistent)
+      3B has 1 experiment essentially at baseline
+
+    Emerging conclusion:
+      Precision-staged training benefit = f(quantization_level)
+      QLoRA 4-bit: possible small MMLU benefit (unconfirmed, within stderr)
+      16-bit full: no benefit (train_loss worse, MMLU noise)
+
 
