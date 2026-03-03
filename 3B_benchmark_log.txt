@@ -1,0 +1,158 @@
+================================================================================
+Project Jellyfish 🪼
+3B Full-Precision Benchmark Log (BF series)
+================================================================================
+
+  This document records the actual benchmark execution results for 3B experiments.
+  See 3B_README.md for hypothesis and design details.
+  See benchmark_log.txt (main branch) for 7B QLoRA 4-bit results (JF series).
+
+  ■ Branch: 3b-full-precision
+  ■ Purpose: Validate CPU-Anchor effect without quantization bottleneck
+  ■ Naming: BF-1, BF-2, ... (Branch Full-precision series)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BF-1] Experiment Environment + 3B Configuration — 2026-03-03
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ■ Hardware (unchanged from JF-1):
+    ┌────────┬──────────────────────────────────────────────────┐
+    │ OS     │ Windows 11 Pro 64-bit (26100.7840)               │
+    │ CPU    │ Intel Core Ultra 9 275HX (2700MHz base)          │
+    │ RAM    │ 64GB (32GB ×2, SK Hynix DDR5-5600)              │
+    │ dGPU   │ NVIDIA GeForce RTX 5090 Laptop GPU (GB203, sm_120, VRAM 24GB) │
+    │ iGPU   │ Intel Graphics                                   │
+    │ Display│ 2560 × 1600, 240Hz                               │
+    │ NVIDIA │ Driver 32.0.15.7703 (2025-07-28)                 │
+    └────────┴──────────────────────────────────────────────────┘
+
+  ■ Software (unchanged from JF-1):
+    - Python: 3.14 (system) → LLaMA-Factory venv (C:\LlamaFactory\venv)
+    - PyTorch: 2.12.0.dev20260228+cu128 (nightly, sm_120 compatible)
+    - LLaMA-Factory: v0.9.4 (git clone --depth 1, pip install -e .)
+    - bitsandbytes: 0.49.2 (Windows + CUDA official support)
+    - HuggingFace Hub: logged in (token: llama-factory, READ permission)
+
+  ■ Model:
+    - Qwen/Qwen2.5-3B-Instruct
+    - Downloaded: C:\Users\alkml\.cache\huggingface\hub\models--Qwen--Qwen2.5-3B-Instruct
+    - Selection reason: smaller model → more MMLU headroom (~15%+ gap from ceiling),
+      16-bit full loading fits in 24GB VRAM, removes QLoRA 4-bit quantization bottleneck
+    - 7B experiments showed C vs G MMLU gap (0.32%) was masked by 4-bit quantization
+      → 3B 16-bit tests whether gap widens without bottleneck
+
+  ■ Dataset:
+    - yahma/alpaca-cleaned (52k instruction-following)
+    - Same as 7B experiments for cross-comparison validity
+
+  ■ Training Method:
+    - LoRA with 16-bit full-precision model loading (NO quantization)
+    - 7B used QLoRA 4-bit → 3B removes this entirely
+    - Model weights: 3B × 2 bytes ≈ 6GB
+    - Optimizer state (fp32): ≈ 12GB
+    - Gradient + activation: ≈ 4GB
+    - Total estimated: ~22GB / 24GB VRAM
+
+  ■ Key Differences from 7B (JF series):
+    ┌──────────────────┬──────────────────────┬──────────────────────┐
+    │                  │ 7B (JF series)       │ 3B (BF series)       │
+    ├──────────────────┼──────────────────────┼──────────────────────┤
+    │ Model            │ Qwen2.5-7B-Instruct  │ Qwen2.5-3B-Instruct  │
+    │ Loading          │ 4-bit QLoRA          │ 16-bit full          │
+    │ Quantization     │ bitsandbytes 4-bit   │ None                 │
+    │ VRAM usage       │ ~10-13GB             │ ~22GB                │
+    │ batch × accum    │ 2×4=8                │ 1×8=8                │
+    │ learning_rate    │ 1.0e-4               │ 2.0e-5               │
+    │ seed             │ 42                   │ 5108                 │
+    │ MMLU headroom    │ ~1.5% (near ceiling) │ ~15%+ (large)        │
+    │ Quantization σ   │ ≈ 0.03               │ ≈ 0 (removed)        │
+    └──────────────────┴──────────────────────┴──────────────────────┘
+
+    Unchanged: lora_rank (8), lora_alpha (16), lora_dropout (0.05),
+    lr_scheduler (cosine), warmup_steps (30), max_steps (500),
+    cutoff_len (512), dataset (alpaca_en)
+
+  ■ Seed Change Rationale:
+    - 7B: seed 42 (single-seed limitation noted in all JF conclusions)
+    - 3B: seed 5108 (cross-seed verification)
+    - If 3B reproduces anchor effect with different seed → seed-independent confirmation
+    - All 3B experiments (Baseline, A, C, D) use seed 5108 for internal consistency
+
+  ■ Experiment Plan (from 3B_README.md):
+
+    Round 0 — Baseline:
+      Baseline: GPU fp32 500 steps 100% (ceiling reference)
+
+    Round 1 — Precision Transition:
+      A: fp32→bf16 (20:80)           — Reproduce F from 7B (downward transition)
+      C: bf16→fp32 (20:80)           — Reverse transition (upward)
+      D: fp32→bf16→fp32 (20:40:40)   — Double transition (recovery test)
+
+    Round 2 — Long-Context Benchmark:
+      RULER NIAH variant (4K/8K/16K/32K)
+      Multi-hop QA (8K/16K)
+
+  ■ Evaluation Plan:
+    Axis 1: Train Loss     — Optimization efficiency
+    Axis 2: MMLU 5-shot    — Knowledge/comprehension (identical to 7B eval conditions)
+    Axis 3: Long-Context   — Context maintenance capability (new)
+
+  ■ Experiment Plan (Updated):
+
+    Round 0 — Pure Precision Baselines:
+      A-1:      GPU bf16 500 steps 100% (floor reference)
+      Baseline: GPU fp32 500 steps 100% (ceiling reference)
+
+    Round 1 — Precision Transition:
+      A: fp32→bf16 (20:80)           — Reproduce F from 7B (downward transition)
+      C: bf16→fp32 (20:80)           — Reverse transition (upward)
+      D: fp32→bf16→fp32 (20:40:40)   — Double transition (recovery test)
+
+    Round 2 — Long-Context Benchmark:
+      RULER NIAH variant (4K/8K/16K/32K)
+      Multi-hop QA (8K/16K)
+
+  ■ File Locations:
+    YAML configs:       C:\LlamaFactory\
+    Execution scripts:  C:\Users\alkml\OneDrive\Desktop\Game\테스트\
+    Model saves:        C:\LlamaFactory\saves\
+    Evaluation results: C:\LlamaFactory\saves\ (per experiment)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BF-2] A-1: GPU bf16 100% (Floor Reference) — 2026-03-03
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  train_loss = 1.267 | runtime = 24m 42s | sub-1.0 = Yes (0.9967, step 380)
+  → Step-by-step data: data.xlsx "Train Loss" sheet, A-1 column
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BF-3] Baseline: GPU fp32 100% (Ceiling Reference) — 2026-03-03
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  train_loss = 1.2672 | runtime = 23m 22s | sub-1.0 = Yes (0.9978, step 380)
+  → Step-by-step data: data.xlsx "Train Loss" sheet, Baseline column
+
+  ■ A-1 vs Baseline Comparison:
+    ┌──────────────────────┬───────────┬────────────┐
+    │                      │ A-1(bf16) │ Base(fp32) │
+    ├──────────────────────┼───────────┼────────────┤
+    │ train_loss           │     1.267 │     1.2672 │
+    │ Δ                    │         +0.0002        │
+    │ Max per-step diff    │         ≤0.002         │
+    │ sub-1.0 step         │  380(0.997) │ 380(0.998) │
+    └──────────────────────┴───────────┴────────────┘
+
+  ■ FINDING — bf16 = fp32 CONFIRMED:
+    - 500 steps, every step within ±0.002. Identical trajectory.
+    - 7B's 22% improvement (Exp F: fp32→bf16) was NOT from fp32 superiority.
+      The improvement came from "precision transition" — the ACT of switching.
+    - sub-1.0 achieved without anchor → 7B's sub-1.0 barrier was QLoRA bottleneck.
+    - This is the first known bf16 vs fp32 full-training comparison with
+      identical seed on the same LLM (no quantization, pure bf16 vs pure fp32).
+
+  ■ Awaiting: Baseline MMLU evaluation (comparison target for Exp A)
+
+
