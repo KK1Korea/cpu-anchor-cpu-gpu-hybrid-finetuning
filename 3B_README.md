@@ -217,7 +217,7 @@ GitHub: cpu-anchor-cpu-gpu-hybrid-finetuning/
 │
 └── 3b-full-precision branch (new)
     ├── 3B_README.md (this document)
-    ├── benchmark_log.txt (JF-11~)
+    ├── 3B_benchmark_log.txt (JF-11~)
     └── data.xlsx
 ```
 
