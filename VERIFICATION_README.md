@@ -82,11 +82,11 @@ All Phase 2 experiments MUST include them.
 
 | Group | Seed | Status |
 |-------|------|--------|
-| Group 1 | 42 | ✅ Complete (A, C, G) |
-| Group 2 | 1234 | ⬜ Pending |
-| Group 3 | 5108 | ⬜ Pending |
-| Group 4 | 7777 | ⬜ Conditional (if 1-3 all pass) |
-| Group 5 | 2025 | ⬜ Conditional (if 1-4 all pass) |
+| Group 1 | 42 | ✅ Complete (A, C, G) — Q1 PASS |
+| Group 2 | 1234 | ❌ Complete (A, C, G) — Q1 FAIL |
+| Group 3 | 5108 | 🚫 Cancelled (Gate triggered) |
+| Group 4 | 7777 | 🚫 Cancelled (Gate triggered) |
+| Group 5 | 2025 | 🚫 Cancelled (Gate triggered) |
 
 ### Batch Configuration
 
@@ -151,20 +151,56 @@ Per group:  A + C + G + 3× MMLU = ~8.5 hours
 
 | File | Content |
 |------|---------|
-| `VERIFICATION_README.md` | This file — experiment design & criteria |
-| `Test_Group/Group_1.md` | Seed 42 — complete data (A, C, G train loss + MMLU) |
-| `Test_Group/Group_2.md` | Seed 1234 — template (to be filled) |
-| `Test_Group/Group_3.md` | Seed 5108 — template (to be filled) |
+| `VERIFICATION_README.md` | This file — experiment design, criteria & final conclusion |
+| `Test_Group/Group_1.md` | Seed 42 — complete data (A, C, G train loss + MMLU) — Q1 PASS |
+| `Test_Group/Group_2.md` | Seed 1234 — complete data (A, C, G train loss + MMLU) — Q1 FAIL |
+| `Test_Group/Group_3.md` | Seed 5108 — cancelled (gate triggered) |
 
 ---
 
 ## Current Status
 
-- [x] Group 1 (seed 42): A, C, G complete with MMLU
-- [ ] Group 2 (seed 1234): not started
-- [ ] Group 3 (seed 5108): not started
+- [x] Group 1 (seed 42): A, C, G complete with MMLU — **Q1 PASS** (C > A)
+- [x] Group 2 (seed 1234): A, C, G complete with MMLU — **Q1 FAIL** (C < A, no grace)
+- [ ] ~~Group 3 (seed 5108): cancelled — gate triggered~~
+
+---
+
+## Final Conclusion
+
+**Gate triggered at Group 2: Q1 FAIL → STOP.**
+
+Per the gate system:
+> "Any group fails Q1 → STOP. Conclusion: noise"
+
+### Group 1 vs Group 2 MMLU Summary
+
+| | Group 1 (seed 42) | Group 2 (seed 1234) |
+|---|---|---|
+| A (Baseline) | 76.25% | 76.63% |
+| C (CPU→bf16) | 76.34% | 76.61% |
+| G (CPU→fp32) | 76.66% | 76.60% |
+| C > A? | ✅ Yes (+0.09) | ❌ No (-0.02) |
+| G > C? | ✅ Yes (+0.32) | ❌ No (-0.01) |
+| A→C→G monotonic? | ✅ Yes | ❌ No (A > C > G) |
+
+### What was confirmed across both groups
+
+1. **CPU = GPU in train_loss** (Δ ≤ 0.007, all conditions) — re-confirmed
+2. **bf16 ≈ fp32 in train_loss** — re-confirmed
+3. **fp32 retains anchor trace longer** (Δ G-A sustains +0.002~0.004 vs C-A converging to 0.000~0.001) — re-confirmed
+4. **SGDR warm restart does NOT reliably improve MMLU** — Group 1 was noise
+
+### What was disproved
+
+- ~~CPU→GPU warm restart improves MMLU over baseline~~
+- ~~Understanding/judgment domains rise distinctly under warm restart~~
+- ~~CPU anchor creates qualitatively different representation~~
+- ~~fp32 Phase2 amplifies the effect~~
+
+**Phase 2 verdict: The SGDR/CPU-anchor MMLU improvement observed in Phase 1 (seed 42) was a seed-specific artifact. The effect does not replicate under seed 1234. Per pre-registered stopping rules, the hypothesis is rejected.**
 
 ---
 
 *Project Jellyfish 🪼 — "Does the heartbeat (lr restart) make the jellyfish smarter?"*
-*Phase 2: Multi-seed SGDR & CPU Anchor Verification*
+*Phase 2 answer: No. The heartbeat changes the path, but not the destination.*
