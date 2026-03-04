@@ -4,23 +4,33 @@
 
 Validate the CPU-Anchor effect discovered in 7B QLoRA 4-bit experiments **without the quantization bottleneck**.
 
+> ⚠️ **EXPERIMENT SUSPENDED (2026-03-04)**
+> 3B QLoRA 4-bit experiment (BF-8) showed CPU = GPU even with quantization,
+> when batch size is controlled. The 7B "0.82% CPU deeper" finding was likely
+> a micro-batch confound (2×4 vs 1×8), not CPU determinism or quantization.
+> See BF-8 for details.
+
 | Item | 7B (Completed) | 3B (Completed) |
 |------|----------------|--------------|
 | Model | Qwen2.5-7B-Instruct | Qwen2.5-3B-Instruct |
-| Loading | 4-bit QLoRA | **16-bit full loading** |
+| Loading | 4-bit QLoRA | **16-bit full loading** / QLoRA 4-bit |
 | VRAM | ~6GB (4-bit) | ~22GB (16-bit + optimizer) |
-| Quantization noise | σ ≈ 0.03 | σ ≈ 0 (removed) |
+| Quantization noise | σ ≈ 0.03 | σ ≈ 0 (16-bit) / σ ≈ 0.03 (4-bit) |
 | MMLU headroom | ~1.5% (near ceiling) | ~15%+ (large headroom) |
-| CPU vs GPU | CPU ≠ GPU (0.82%) | **CPU = GPU (0.000%)** |
+| CPU vs GPU (16-bit) | Not tested | **CPU = GPU (0.000%)** |
+| CPU vs GPU (4-bit) | CPU ≠ GPU (0.82%) ⚠️ **batch confound** | **CPU = GPU (0.002%)** ← batch controlled |
 
-### Core Discovery: Quantization Is the Key Variable
+### ~~Core Discovery: Quantization Is the Key Variable~~ — RETRACTED
 
-3B experiments conclusively demonstrated:
+~~3B experiments conclusively demonstrated:~~
 
-1. **bf16 = fp32** in steady-state training (3× confirmed)
-2. **Precision staging = zero effect** with continuous lr
-3. **CPU = GPU** in 16-bit full, regardless of lr schedule
-4. **★ CPU ≠ GPU only in 7B QLoRA 4-bit** → Quantization is the sole variable
+1. **bf16 = fp32** in steady-state training (3× confirmed) ✅ STILL VALID
+2. **Precision staging = zero effect** with continuous lr ✅ STILL VALID
+3. **CPU = GPU** in 16-bit full, regardless of lr schedule ✅ STILL VALID
+4. ~~★ CPU ≠ GPU only in 7B QLoRA 4-bit → Quantization is the sole variable~~ **RETRACTED**
+
+**What actually happened:** 3B QLoRA 4-bit with batch 1×8 → CPU = GPU (Δ ≤ 0.002).
+7B's "0.82%" compared GPU batch 1×8 vs CPU batch 2×4 — batch mismatch, not quantization.
 
 ---
 
@@ -45,12 +55,15 @@ Total:                            ~22GB / 24GB ← fits
 
 ## 7B Completed Experiments Summary (Reference)
 
-| Exp | Config | Train Loss | MMLU | Note |
-|-----|--------|-----------|------|------|
-| A | GPU bf16 100% | 1.184 | 76.25% | Baseline |
-| C | CPU fp32→GPU bf16 (20:80) | 0.9177 (-22.5%) | 76.34% | CPU warm restart |
-| F | GPU fp32→GPU bf16 (20:80) | 0.9268 (-21.7%) | 76.41% | GPU warm restart (=SGDR) |
-| G | CPU fp32→GPU fp32 (20:80) | 0.9188 (-22.4%) | 76.66% | CPU warm restart + fp32 |
+> ⚠️ train_loss values are HF Trainer artifacts (~20% deflation). MMLU is the only valid metric.
+> ⚠️ F used batch 1×8, A/C used batch 2×4 — confounds F vs C comparison.
+
+| Exp | Config | Reported Loss | **Corrected Loss** | MMLU | Batch (Phase1) |
+|-----|--------|-----------|------|------|------|
+| A | GPU bf16 100% | 1.184 | 1.184 | 76.25% | 2×4=8 |
+| C | CPU fp32→GPU bf16 (20:80) | ~~0.9177~~ | **1.1471** | 76.34% | 2×4=8 |
+| F | GPU fp32→GPU bf16 (20:80) | ~~0.9268~~ | **1.1585** | 76.41% | **1×8=8** ⚠️ |
+| G | CPU fp32→GPU fp32 (20:80) | ~~0.9188~~ | **1.1485** | 76.66% | 1×8=8 |
 
 ### SGDR Discovery (Revised from "Three-Factor Model")
 
@@ -60,7 +73,7 @@ MMLU over baseline (4/4 positive direction, p = 0.0625).
 
 ```
 Factor 1: SGDR warm restart             — Consistently improves MMLU (F, C, G > A)
-Factor 2: CPU determinism in QLoRA 4-bit — 0.82% Phase1 difference, Phase2 divergence
+Factor 2: CPU determinism in QLoRA 4-bit — RETRACTED (batch confound, see BF-8)
 Factor 3: Phase2 precision               — Invisible in train loss, visible in MMLU distribution
 ```
 
@@ -126,15 +139,45 @@ all 40 Phase2 steps. Exp A's +0.036 transition shock was 100% caused by lr disco
 
 **train_loss is NOT a valid comparison metric for split-training experiments.**
 MMLU is the only reliable cross-experiment comparison axis.
-| C | bf16→fp32 (20:80) | Upward | Early | Reverse transition effect |
-| D | fp32→bf16→fp32 (20:40:40) | Down then up | Double | Recovery effect |
 
-Estimated time: ~20 min each, ~60 min total
+### Round 2 — QLoRA 4-bit Quantization Test (Batch-Controlled)
 
-**B (fp32 80%→bf16 20%) — temporarily deferred:**
-- 400 steps of accumulated optimizer state + Phase4 "edge of stability" + precision switch = catastrophic perturbation risk
-- Analogy: Taking off glasses while walking a tightrope (vs. early transition = taking off glasses on flat ground)
-- May revisit after Round 1 results clarify transition dynamics
+> ⚠️ **This round was intended to confirm "quantization = sole variable" but DISPROVED it.**
+
+| Exp | Config | Purpose | Status |
+|-----|--------|---------|--------|
+| Q-G GPU | 3B QLoRA 4-bit, GPU fp32, batch 1×8, 100 steps | GPU baseline under quantization | ✅ Done (train_loss = 1.3217) |
+| Q-G CPU | 3B QLoRA 4-bit, CPU fp32, batch 1×8, 100 steps | CPU under quantization | ⏸️ Partial (50/100 steps) |
+
+```
+Phase1 comparison (step 10-50):
+  ┌──────────┬──────────────┬──────────────┬──────────┐
+  │ Step     │ GPU fp32     │ CPU fp32     │ Δ        │
+  ├──────────┼──────────────┼──────────────┼──────────┤
+  │ step  10 │ 1.806        │ 1.807        │ +0.001   │
+  │ step  20 │ 1.590        │ 1.592        │ +0.002   │
+  │ step  30 │ 1.387        │ 1.388        │ +0.001   │
+  │ step  40 │ 1.294        │ 1.295        │ +0.001   │
+  │ step  50 │ 1.358        │ 1.360        │ +0.002   │
+  └──────────┴──────────────┴──────────────┴──────────┘
+
+  Result: CPU = GPU (Δ ≤ 0.002) even with QLoRA 4-bit!
+  → Quantization is NOT the variable.
+  → 7B "0.82%" was batch confound (2×4 vs 1×8).
+```
+
+**Batch confound explanation:**
+```
+7B experiments (batch DIFFERENT):
+  GPU fp32 (Exp F): batch 1×8 = 8  ← VRAM limitation
+  CPU fp32 (Exp C/G): batch 2×4 = 8  ← no VRAM constraint
+  Result: "CPU ≠ GPU" (Δ = 0.82%) → but TWO variables changed!
+
+3B experiments (batch SAME):
+  GPU fp32: batch 1×8 = 8
+  CPU fp32: batch 1×8 = 8  ← CONTROLLED
+  Result: CPU = GPU (Δ ≤ 0.002) → only device changed, no effect
+```
 
 ### ★ CPU-C Discontinuation Decision (2026-03-04)
 
@@ -166,38 +209,22 @@ Round 1 (MMLU-based only — train_loss comparison invalid due to artifact):
 A(MMLU) > Baseline(MMLU)      → lr restart improves generalization. ✗ Not observed (+0.07%, noise)
 A(MMLU) ≈ Baseline(MMLU)      → No transition benefit without quantization. ✅ CONFIRMED
 AA(loss) ≈ Baseline(loss)     → Precision transition with continuous lr = zero effect. ✅ CONFIRMED (±0.001)
-AA(MMLU) vs Baseline(MMLU)    → Final precision-only test. Pending.
+AA(MMLU) vs Baseline(MMLU)    → Final precision-only test. Pending (experiment suspended).
 CPU-AA(loss) ≈ Baseline(loss) → CPU determinism with continuous lr = zero effect in 16-bit. ✅ CONFIRMED (±0.002)
-CPU-AA(MMLU) vs Baseline(MMLU)→ CPU determinism MMLU test. Pending.
+CPU-AA(MMLU) vs Baseline(MMLU)→ CPU determinism MMLU test. Pending (experiment suspended).
 CPU-C Phase1 = Exp A Phase1   → CPU = GPU under warm restart lr too. ✅ CONFIRMED (±0.002)
   ★ 3B 16-bit: CPU = GPU across ALL conditions tested (continuous, discontinuous)
-  ★ 7B QLoRA 4-bit: CPU ≠ GPU (0.82%) under warm restart + quantization
-  ★★★ QUANTIZATION is the sole variable causing CPU ≠ GPU. ★★★
-C(MMLU) vs A(MMLU)            → Direction effect. Deferred.
-D(MMLU) vs A(MMLU)            → Recovery effect. Deferred.
+  ★ 7B QLoRA 4-bit: CPU ≠ GPU (0.82%) — NOW KNOWN TO BE BATCH CONFOUND (see Round 2)
 
-Quantization Hypothesis Test (Next):
-3B QLoRA 4-bit + CPU vs GPU   → If CPU ≠ GPU: quantization confirmed 100%
-                               → If CPU = GPU: model size is variable (unexpected)
+Round 2 (Quantization Test — DISPROVED hypothesis):
+Q-G(4-bit): CPU = GPU (Δ≤0.002) → Quantization does NOT cause CPU ≠ GPU. ✅ CONFIRMED
+  ★ When batch is controlled (1×8 for both), CPU = GPU in ALL conditions:
+    16-bit continuous lr, 16-bit discontinuous lr, AND 4-bit discontinuous lr.
+  ★ 7B "0.82%" was the ONLY case where batch differed (GPU 1×8 vs CPU 2×4).
+  ★★★ "QUANTIZATION = sole variable" RETRACTED. Batch confound discovered. ★★★
 ```
 
-### Round 2 — QLoRA 4-bit Quantization Test (Next)
-
-**Purpose:** Confirm that quantization noise is the sole variable causing CPU ≠ GPU.
-
-| Exp | Config | Purpose | Status |
-|-----|--------|---------|--------|
-| Q-GPU | 3B QLoRA 4-bit, GPU fp32, 100 steps | GPU baseline under quantization | Planned |
-| Q-CPU | 3B QLoRA 4-bit, CPU fp32, 100 steps | CPU under quantization | Planned |
-
-```
-Phase1 only (100 steps), compare loss trajectories:
-  Q-GPU vs Q-CPU → same model, same seed, same lr, only device differs
-  If Δ > 0.5%: quantization confirmed as the key variable
-  If Δ ≤ 0.2%: model size or LoRA config is the variable
-```
-
-### Round 3 — Long-Context Benchmark (Future)
+### Round 3 — Long-Context Benchmark (Abandoned)
 
 **Purpose:** Distinguish whether warm restart is "a trick for short problems" or "fundamental capability improvement"
 
@@ -237,46 +264,52 @@ Only 1 axis improves → Training trick level
 
 ## Key Results Summary
 
-### 3B 16-bit Complete Picture
+### 3B Complete Picture (16-bit + 4-bit)
 
 ```
 ┌──────────────────────┬──────────────┬──────────────────────┐
 │                      │ Continuous lr │ Discontinuous lr     │
 │                      │              │ (SGDR warm restart)   │
 ├──────────────────────┼──────────────┼──────────────────────┤
-│ GPU fp32 anchor      │ AA = Base ✅  │ A = +0.52% loss ✅   │
+│ GPU fp32 (16-bit)    │ AA = Base ✅  │ A = +0.52% loss ✅   │
 │                      │ (±0.001)     │ MMLU +0.07% (noise)  │
 ├──────────────────────┼──────────────┼──────────────────────┤
-│ CPU fp32 anchor      │ CPU-AA = Base│ CPU-C = Exp A ✅      │
+│ CPU fp32 (16-bit)    │ CPU-AA = Base│ CPU-C = Exp A ✅      │
 │                      │ (±0.002)     │ (Phase1 Δ≤0.002,    │
 │                      │              │  discontinued)        │
+├──────────────────────┼──────────────┼──────────────────────┤
+│ QLoRA 4-bit (disc.lr)│ Not tested   │ Q-G: CPU = GPU ★     │
+│                      │              │ (Δ≤0.002, step 10-50)│
 └──────────────────────┴──────────────┴──────────────────────┘
 
-Finding: In 16-bit full, CPU = GPU in ALL conditions.
-  - Continuous lr: ✅ (CPU-AA)
-  - Discontinuous lr: ✅ (CPU-C)
-  - No experiment produced CPU ≠ GPU.
+Finding: CPU = GPU in ALL conditions tested on 3B:
+  - 16-bit continuous lr: ✅ (CPU-AA)
+  - 16-bit discontinuous lr: ✅ (CPU-C)
+  - 4-bit discontinuous lr: ✅ (Q-G) ★ NEW
+  - No experiment produced CPU ≠ GPU when batch was controlled.
 ```
 
 ### Cross-Model Comparison: 3B vs 7B
 
 ```
-┌────────────────────────┬──────────────────┬──────────────────┐
-│                        │ 3B (16-bit full) │ 7B (QLoRA 4-bit) │
-├────────────────────────┼──────────────────┼──────────────────┤
-│ bf16 = fp32?           │ Yes (3× confirmed)│ Not tested       │
-│ Precision staging?     │ Zero effect       │ Artifact (22%)   │
-│ CPU = GPU? (cont. lr)  │ Yes (±0.002)     │ Not tested       │
-│ CPU = GPU? (disc. lr)  │ Yes (±0.002)     │ NO (0.82% Δ)    │
-│ SGDR MMLU improvement? │ +0.07% (1 sample)│ 4/4 positive     │
-│ Quantization?          │ None             │ 4-bit QLoRA      │
-├────────────────────────┼──────────────────┼──────────────────┤
-│ KEY DIFFERENCE         │ Smooth landscape │ Rough landscape  │
-│                        │ → CPU = GPU      │ → CPU ≠ GPU      │
-└────────────────────────┴──────────────────┴──────────────────┘
+┌────────────────────────┬──────────────────┬──────────────────┬──────────────────┐
+│                        │ 3B (16-bit full) │ 3B (QLoRA 4-bit) │ 7B (QLoRA 4-bit) │
+├────────────────────────┼──────────────────┼──────────────────┼──────────────────┤
+│ bf16 = fp32?           │ Yes (3× confirmed)│ Not tested       │ Not tested       │
+│ Precision staging?     │ Zero effect       │ Not tested       │ Artifact (22%)   │
+│ CPU = GPU? (cont. lr)  │ Yes (±0.002)     │ Not tested       │ Not tested       │
+│ CPU = GPU? (disc. lr)  │ Yes (±0.002)     │ Yes (±0.002) ★   │ "NO" (0.82%) ⚠️  │
+│ CPU vs GPU batch       │ 1×8 = 1×8        │ 1×8 = 1×8        │ 1×8 ≠ 2×4 ⚠️    │
+│ SGDR MMLU improvement? │ +0.07% (1 sample)│ Not tested       │ 4/4 positive     │
+│ Quantization?          │ None             │ 4-bit QLoRA      │ 4-bit QLoRA      │
+├────────────────────────┼──────────────────┼──────────────────┼──────────────────┤
+│ KEY FINDING            │ CPU = GPU        │ CPU = GPU        │ Batch confound!  │
+│                        │ (smooth landscape)│ (rough landscape)│ (2×4 vs 1×8)    │
+└────────────────────────┴──────────────────┴──────────────────┴──────────────────┘
 
-★ Quantization is the sole variable causing CPU ≠ GPU.
-★ Next: 3B QLoRA 4-bit to confirm (same model, add quantization).
+★ 3B QLoRA 4-bit CPU = GPU DISPROVES "quantization causes CPU ≠ GPU"
+★ 7B "0.82%" is the ONLY case where batch differed → likely batch artifact
+★ "Quantization is the sole variable" — RETRACTED
 ```
 
 ---
@@ -294,6 +327,15 @@ Train loss: 1.267
 sub-1.0: Yes (0.9967, step 380)
 MMLU: pending
 → Detailed data: data.xlsx Sheet "Train Loss"
+
+=== BF-8: 3B Q-G (QLoRA 4-bit, CPU vs GPU, batch-controlled) ===
+Date: 2026-03-04
+Model: Qwen2.5-3B-Instruct, QLoRA 4-bit
+Steps: 100 (GPU complete, CPU 50/100 at suspension)
+lr: 1e-4, seed: 5108, batch: 1×8=8
+GPU train_loss: 1.3217 (100 steps)
+CPU vs GPU: Δ ≤ 0.002 (step 10-50) → CPU = GPU
+★ RETRACTED: "Quantization causes CPU ≠ GPU"
 ```
 
 ### data.xlsx (All Data)
@@ -322,8 +364,9 @@ Sheet 8: Long-Context    — RULER/Multi-hop results + length-wise charts
 | Exp AA | fp32→bf16 cont. lr | ~19 min | ✅ Done (loss = Base ±0.001) |
 | CPU-AA | CPU fp32→GPU bf16 cont. lr | ~7.5h + 18min | ✅ Done (loss = Base ±0.002) |
 | CPU-C | CPU fp32→GPU bf16 discont. lr | ~2h (partial) | ★ Discontinued (CPU=GPU confirmed) |
-| MMLU eval (AA, CPU-AA) | 57-subject evaluation | ~40 min each | Pending |
-| **3B QLoRA 4-bit test** | **CPU vs GPU under quantization** | **~3h** | **Next** |
+| **Q-G GPU** | **QLoRA 4-bit GPU fp32 Phase1** | **4m 12s** | **✅ Done (1.3217)** |
+| **Q-G CPU** | **QLoRA 4-bit CPU fp32 Phase1** | **~50/100 steps** | **⏸️ Suspended (CPU=GPU, Δ≤0.002)** |
+| MMLU eval (AA, CPU-AA) | 57-subject evaluation | ~40 min each | Abandoned (experiment suspended) |
 
 ---
 
@@ -335,20 +378,20 @@ Sheet 8: Long-Context    — RULER/Multi-hop results + length-wise charts
 - ~~Does precision staging help?~~ **No.** With continuous lr, zero effect (±0.001).
 - ~~Does CPU determinism help in 16-bit?~~ **No.** CPU = GPU in all conditions (±0.002).
 - ~~Does lr schedule change CPU vs GPU?~~ **No.** Both continuous and discontinuous: CPU = GPU.
+- ~~Does quantization create CPU ≠ GPU?~~ **No (retracted).** 3B QLoRA 4-bit with same batch → CPU = GPU (±0.002). 7B "0.82%" was batch confound.
 
-### Active
+### Unresolved (Experiment Suspended)
 
-1. **Does quantization create CPU ≠ GPU?** 3B QLoRA 4-bit experiment planned.
-2. **Does warm restart (SGDR) improve MMLU in 3B?** Eval pending (AA, CPU-AA).
-3. **Does multi-cycle CPU-SGDR amplify the effect?** Needs 2+ epoch experiment.
-4. **Does CPU-anchored SGDR outperform standard SGDR?** Needs QLoRA environment.
+1. **Was the 7B "0.82%" caused by batch (2×4 vs 1×8) or something else?** Cannot verify — GPU fp32 batch 2×4 OOMs on 24GB VRAM.
+2. **Does warm restart (SGDR) consistently improve MMLU?** 7B: 4/4 positive. 3B: eval abandoned.
+3. **Does micro-batch size (1×8 vs 2×4) systematically affect QLoRA training?** Untested.
 
-### Future
+### Abandoned
 
-5. Does the MMLU gap emerge at full scale (1 epoch+, 6500+ steps)?
-6. Does fp64 CPU anchor provide deeper basins than fp32?
-7. Does high-quality data (LIMA, Orca) + CPU-anchored SGDR amplify the effect?
-8. Do alternative benchmarks (TruthfulQA, RULER) capture warm restart effects?
+4. ~~Multi-cycle CPU-anchored SGDR~~ — CPU determinism hypothesis suspended.
+5. ~~Multiple seeds~~ — Experiment suspended before seed variation.
+6. ~~fp64 CPU anchor~~ — Experiment suspended.
+7. ~~Long-context benchmarks~~ — Experiment suspended.
 
 ---
 
@@ -364,7 +407,7 @@ GitHub: cpu-anchor-cpu-gpu-hybrid-finetuning/
 │
 └── 3b-full-precision branch
     ├── 3B_README.md (this document)
-    ├── 3B_benchmark_log.txt (BF-1~BF-7)
+    ├── 3B_benchmark_log.txt (BF-1~BF-8)
     └── data.xlsx
 ```
 
@@ -374,9 +417,8 @@ GitHub: cpu-anchor-cpu-gpu-hybrid-finetuning/
 
 - **Damione** (HuggingFace) — Suggested Experiment F (precision vs determinism isolation)
 - **Loshchilov & Hutter** — SGDR: Warm Restarts (ICLR 2017) that our "design flaw" rediscovered
-- To be updated after quantization experiment results
 
 ---
 
-*Last updated: 2026-03-04*
-*Project Jellyfish 🪼 — CPU-Anchor Hybrid Fine-tuning Research*
+*Last updated: 2026-03-04 (experiment suspended)*
+*Project Jellyfish 🪼 — CPU-Anchor Hybrid Fine-tuning Research (concluded)*
