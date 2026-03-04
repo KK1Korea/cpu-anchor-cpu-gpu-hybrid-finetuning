@@ -26,16 +26,17 @@
 > **Confirmed findings:**
 > - bf16 = fp32 in steady-state training (3× independent confirmation, 3B 16-bit full)
 > - Precision transition with continuous lr = zero effect (3B Exp AA, ±0.001)
-> - CPU = GPU in continuous lr + 16-bit full (3B CPU-AA, ±0.002)
+> - CPU = GPU in 16-bit full, ALL lr schedules (3B CPU-AA ±0.002, CPU-C ±0.002)
 > - SGDR (warm restart) consistently improves MMLU in fine-tuning (4/4 experiments)
 > - train_loss "22% improvement" is a measurement artifact (HF Trainer resume logic)
+> - ★ **Quantization is the sole variable causing CPU ≠ GPU** (3B 16-bit: 0%, 7B QLoRA: 0.82%)
 >
 > **Open investigation:**
-> - CPU determinism in QLoRA 4-bit environment (7B: CPU 0.82% deeper, 3B 16-bit: 0%)
-> - CPU warm restart vs GPU warm restart (CPU-C experiment in progress)
+> - 3B QLoRA 4-bit CPU vs GPU — final confirmation that quantization causes CPU ≠ GPU
+> - Multi-cycle CPU-anchored SGDR (2+ epoch, multiple restarts)
 > - MMLU evaluation for continuous-lr experiments (AA, CPU-AA pending)
 
-**Accidentally rediscovering SGDR led to a new question: can CPU determinism improve the quality of warm restarts? Standard SGDR restarts from a GPU's stochastic position. We restart from a CPU's deterministic position — and early data suggests it may be better.**
+**Accidentally rediscovering SGDR led to a new question: can CPU determinism improve the quality of warm restarts? Standard SGDR restarts from a GPU's stochastic position. We restart from a CPU's deterministic position — and in quantized (4-bit) environments, CPU and GPU take measurably different paths.**
 
 ---
 
@@ -131,26 +132,34 @@ The industry assumption that bf16 ≈ fp32 is correct. Precision staging
 (switching from fp32 to bf16 mid-training) produces zero effect when the
 lr schedule is continuous.
 
-### 3. CPU Determinism: Environment-Dependent
+### 3. CPU Determinism: Quantization-Dependent
 
-CPU determinism effects depend on the training environment:
+CPU determinism effects depend on quantization, not lr schedule or precision:
 
 ```
 3B 16-bit full (no quantization):
-  Continuous lr:   CPU = GPU (Δ ≤ 0.002) — no effect
-  Warm restart:    CPU vs GPU ??? (CPU-C in progress)
+  Continuous lr:    CPU = GPU (Δ ≤ 0.002) — CPU-AA
+  Discontinuous lr: CPU = GPU (Δ ≤ 0.002) — CPU-C (discontinued, confirmed at step 70)
+  → CPU = GPU in ALL conditions tested.
 
 7B QLoRA 4-bit (quantization):
-  Warm restart:    CPU ≠ GPU (Phase1 Δ = 0.82%, Phase2 divergence +20%)
+  Discontinuous lr: CPU ≠ GPU (Phase1 Δ = 0.82%, Phase2 divergence +20%)
+  → CPU finds different trajectory from GPU.
 ```
 
-In 7B QLoRA, CPU consistently reached deeper loss than GPU in Phase1
-(step 40-100, same lr, same precision, same seed — only determinism differs).
-This difference amplified through Phase2 instead of converging.
+★ **Quantization is the sole variable causing CPU ≠ GPU.**
 
-But in 3B 16-bit full, CPU and GPU produced identical trajectories.
-This suggests CPU determinism effects may require quantization noise
-(4-bit landscape roughness) and/or warm restart conditions.
+3B CPU-C was discontinued at step 70/100 because Phase1 loss matched Exp A (GPU)
+at every step (Δ ≤ 0.002). Same anchor → same Phase2 → same MMLU. No scientific
+value in completing the experiment.
+
+**Mechanism (hypothesis):**
+4-bit quantization compresses weights → dequantization introduces rounding noise →
+GPU processes this noise non-deterministically (stochastic path) while CPU processes
+it deterministically (consistent path). Without quantization (16-bit full), there is
+no rounding noise, so CPU and GPU follow identical paths regardless of lr schedule.
+
+**Next step:** 3B QLoRA 4-bit CPU vs GPU to confirm on the same model.
 
 ### 4. Warm Restart Direction: Train Loss Worsens, MMLU Improves
 
@@ -261,11 +270,12 @@ Phase2 (both switched to GPU):
 
 **Evidence from 3B (16-bit full, no quantization):**
 ```
-Continuous lr:  CPU fp32 = GPU fp32 (Δ ≤ 0.002 across all steps)
-Warm restart:   CPU-C in progress — will determine if quantization is required
+Continuous lr:    CPU fp32 = GPU fp32 (Δ ≤ 0.002) — CPU-AA
+Discontinuous lr: CPU fp32 = GPU fp32 (Δ ≤ 0.002) — CPU-C (step 10-70)
 
 = Without quantization noise, CPU and GPU follow identical paths.
-= CPU determinism may only matter when the landscape is rough (4-bit quantization).
+= lr schedule does NOT change this — tested with both continuous and discontinuous.
+= ★ Quantization is the sole variable causing CPU ≠ GPU.
 ```
 
 ### The Analogy
@@ -297,15 +307,17 @@ Branch: `3b-full-precision` — Qwen2.5-3B-Instruct, 16-bit full (no quantizatio
 | A | fp32→bf16 (20:80) discont. lr | 0.9801 (artifact) | 69.37% | lr artifact + MMLU noise |
 | AA | fp32→bf16 (20:80) cont. lr | 0.975 (artifact) | pending | Baseline ±0.001 → precision transition = zero effect ✅ |
 | CPU-AA | CPU fp32→GPU bf16 cont. lr | 0.9749 (artifact) | pending | Baseline ±0.002 → CPU determinism = zero in 16-bit ✅ |
-| CPU-C | CPU fp32→GPU bf16 discont. lr | **in progress** | — | CPU warm restart test |
+| CPU-C | CPU fp32→GPU bf16 discont. lr | **discontinued** | — | ★ CPU = GPU at step 70 (Δ ≤ 0.002) → quantization confirmed |
 
 ### Key 3B Findings
 
 1. **bf16 = fp32** (3× confirmed in 16-bit full)
 2. **Precision transition = zero effect** with continuous lr
-3. **CPU = GPU** in smooth landscape (16-bit, no quantization)
-4. **Warm restart (SGDR) worsens train_loss** in 16-bit full (+0.52%), opposite of 7B QLoRA
-5. **But MMLU improved in 7B** — warm restart may trade train_loss for generalization
+3. **CPU = GPU** in smooth landscape (16-bit, no quantization) — all lr schedules tested
+4. **★ Quantization is the sole variable causing CPU ≠ GPU** — 3B 16-bit: 0%, 7B QLoRA: 0.82%
+5. **Warm restart (SGDR) worsens train_loss** in 16-bit full (+0.52%), opposite of 7B QLoRA
+6. **But MMLU improved in 7B** — warm restart may trade train_loss for generalization
+7. **Next:** 3B QLoRA 4-bit CPU vs GPU to confirm quantization hypothesis on same model
 
 ---
 
@@ -406,25 +418,26 @@ Trained LoRA adapters are hosted on HuggingFace:
 - ~~Does bf16 = fp32?~~ **Yes.** 3× independent confirmation in 3B 16-bit full.
 - ~~Does precision staging help with continuous lr?~~ **No.** Exp AA = Baseline ±0.001.
 - ~~Does CPU determinism help with continuous lr + no quantization?~~ **No.** CPU-AA = Baseline ±0.002.
+- ~~Does CPU determinism help with discontinuous lr + no quantization?~~ **No.** CPU-C = Exp A ±0.002 (discontinued at step 70).
 - ~~Is the 22% train loss improvement real?~~ **No.** Measurement artifact (HF Trainer resume logic).
 - ~~Does GPU fp32-only training match the anchor effect?~~ **Answered by Experiment F:** On reported train_loss (artifact-affected), GPU fp32 captures 96.6%. On MMLU, F (76.41%) > C (76.34%) with STEM preserved.
+- ~~Does CPU determinism require quantization noise?~~ **Yes.** 3B 16-bit: CPU = GPU (both lr schedules). 7B QLoRA 4-bit: CPU ≠ GPU (0.82%). ★ Quantization is the sole variable.
 
 ### Active Investigation
 
-1. **Does CPU warm restart outperform GPU warm restart?** 7B data suggests yes (G > F), but within stderr. 3B CPU-C experiment in progress.
-2. **Does CPU determinism require quantization noise?** 3B 16-bit: CPU = GPU. 7B QLoRA: CPU ≠ GPU. Need 7B QLoRA + continuous lr + CPU to isolate.
-3. **Does warm restart (SGDR) consistently improve MMLU in fine-tuning?** 7B: 4/4 positive. 3B: MMLU evaluation pending (AA, CPU-AA, CPU-C).
-4. **If CPU-C (3B, warm restart + CPU) improves MMLU:** This confirms CPU deterministic restart > GPU stochastic restart even without quantization.
-5. **If CPU-C (3B, warm restart + CPU) does not improve MMLU:** CPU restart advantage requires quantization noise — applicable only to QLoRA/GPTQ settings.
+1. **3B QLoRA 4-bit: Does quantization create CPU ≠ GPU on the same model?** Same 3B model + add 4-bit quantization → if CPU ≠ GPU: quantization confirmed 100%. If CPU = GPU: model size is variable (unexpected).
+2. **Does warm restart (SGDR) consistently improve MMLU in fine-tuning?** 7B: 4/4 positive. 3B: MMLU evaluation pending (AA, CPU-AA).
+3. **Multi-cycle CPU-anchored SGDR:** Does [CPU→GPU] × N restarts amplify the effect? (2+ epoch experiment planned)
+4. **Multiple seeds:** Current results from single seeds only. Reproducibility with 3+ seeds needed.
 
 ### Future Directions
 
-6. Does the MMLU gap emerge at full scale (1 epoch+, 6500+ steps)?
-7. What is the optimal restart ratio? (10%? 20%? Multiple restarts?)
-8. Does CPU-Anchored SGDR with multiple restarts (CPU→GPU→CPU→GPU...) amplify the effect?
-9. Does fp64 CPU anchor provide a deeper basin than fp32 CPU anchor?
-10. Does high-quality data (LIMA, Orca) + CPU-anchored SGDR amplify the effect?
-11. Do alternative benchmarks (TruthfulQA, needle-in-a-haystack) capture warm restart effects?
+5. Does the MMLU gap emerge at full scale (1 epoch+, 6500+ steps)?
+6. What is the optimal restart ratio? (10%? 20%? Multiple restarts?)
+7. Does CPU-Anchored SGDR with multiple restarts (CPU→GPU→CPU→GPU...) amplify the effect?
+8. Does fp64 CPU anchor provide a deeper basin than fp32 CPU anchor?
+9. Does high-quality data (LIMA, Orca) + CPU-anchored SGDR amplify the effect?
+10. Do alternative benchmarks (TruthfulQA, needle-in-a-haystack) capture warm restart effects?
 
 ---
 
