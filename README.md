@@ -3,40 +3,59 @@
 [![HuggingFace](https://img.shields.io/badge/🤗-LoRA%20Adapters-yellow?style=flat-square)](https://huggingface.co/KK1kk1/jellyfish-cpu-anchor-lora)
 # 🪼 Jellyfish: CPU-Anchor Hybrid Training
 
-> **Research Status (2026-03-04)**
+> **⚠️ ERRATA & EXPERIMENT STATUS (2026-03-04) — PLEASE READ FIRST**
 >
-> **What started as a "design flaw" turned out to be a rediscovery of SGDR (Warm Restarts).**
+> **This experiment has been suspended due to unresolved confounding variables.**
 >
-> Our Phase1/Phase2 split training accidentally implemented a warm restart
-> (Loshchilov & Hutter, 2017 — "SGDR: Stochastic Gradient Descent with Warm Restarts").
-> SGDR is a proven technique that improves generalization by periodically restarting the
-> learning rate schedule. Our "lr discontinuity" was exactly this: Phase1 completes a
-> 100-step cosine cycle (lr → 0), Phase2 starts a new 500-step cosine (lr jumps back up).
+> **Major corrections to original claims:**
 >
-> **Key finding:** All warm-restart experiments showed MMLU improvement over baseline:
-> - F (GPU restart): +0.16%
-> - C (CPU restart): +0.09%
-> - G (CPU restart + fp32 Phase2): +0.41%
-> - All within stderr (±0.4%), but **4/4 positive direction** (p = 0.0625, binomial)
-> - Per-subject sign test for G: 27↑ 12↓ 18= (p < 0.01)
+> **1. train_loss "22.5% improvement" is FAKE (measurement artifact).**
+> HuggingFace Trainer's resume logic resets the loss accumulator but divides by
+> `global_step` (total steps across both phases). Phase2 trains 400 steps but
+> divides by 500, producing ~20% artificial deflation. Corrected values:
 >
-> **The real question is no longer "does precision staging work?" but:**
-> **"Does CPU deterministic restart outperform GPU stochastic restart (standard SGDR)?"**
+> | Experiment | Reported (artifact) | Corrected | vs Baseline |
+> |---|---|---|---|
+> | A (baseline) | 1.184 | 1.184 | — |
+> | F (GPU fp32→bf16) | 0.9268 | **1.1585** | -2.2% |
+> | C (CPU fp32→GPU bf16) | 0.9177 | **1.1471** | -3.1% |
+> | G (CPU fp32→GPU fp32) | 0.9188 | **1.1485** | -3.0% |
 >
-> **Confirmed findings:**
-> - bf16 = fp32 in steady-state training (3× independent confirmation, 3B 16-bit full)
-> - Precision transition with continuous lr = zero effect (3B Exp AA, ±0.001)
-> - CPU = GPU in 16-bit full, ALL lr schedules (3B CPU-AA ±0.002, CPU-C ±0.002)
-> - SGDR (warm restart) consistently improves MMLU in fine-tuning (4/4 experiments)
-> - train_loss "22% improvement" is a measurement artifact (HF Trainer resume logic)
-> - ★ **Quantization is the sole variable causing CPU ≠ GPU** (3B 16-bit: 0%, 7B QLoRA: 0.82%)
+> **2. "96.6% precision / 3.4% CPU determinism" decomposition is INVALID.**
+> This was calculated from artifact-inflated values. With corrected values:
+> A→F = 0.0255, F→C = 0.0114, giving ~69% / ~31%. But this is also unreliable
+> because of the batch confound below.
 >
-> **Open investigation:**
-> - 3B QLoRA 4-bit CPU vs GPU — final confirmation that quantization causes CPU ≠ GPU
-> - Multi-cycle CPU-anchored SGDR (2+ epoch, multiple restarts)
-> - MMLU evaluation for continuous-lr experiments (AA, CPU-AA pending)
+> **3. Batch size confound discovered in F vs C/G comparison.**
+>
+> | Experiment | Phase1 batch | Phase1 device |
+> |---|---|---|
+> | C, G | 2×4=8 | CPU |
+> | F | 1×8=8 | GPU |
+>
+> The "0.82% CPU deeper than GPU" finding compared F (GPU, batch 1×8) vs C/G
+> (CPU, batch 2×4). Two variables changed simultaneously: device AND micro-batch.
+> When 3B QLoRA 4-bit was tested with **identical batch (1×8 for both)**,
+> CPU = GPU (Δ ≤ 0.001 at step 40). The original "CPU determinism" signal
+> may have been a micro-batch artifact.
+>
+> **4. "Quantization causes CPU ≠ GPU" is UNCONFIRMED.**
+> 3B QLoRA 4-bit with same batch → CPU = GPU. The 7B divergence may have been
+> batch (2×4 vs 1×8), not quantization, not CPU determinism.
+>
+> **What remains valid:**
+> - MMLU data (independent evaluation, unaffected by train_loss artifact)
+> - MMLU warm restart improvement: 4/4 positive direction (within stderr individually)
+> - bf16 = fp32 in steady-state training (3× confirmed, 3B 16-bit full)
+> - Precision transition with continuous lr = zero effect (3B Exp AA)
+> - GPU hardware noise floor observation
+> - Zero transition shock between phases
+>
+> **Experiment suspended.** Too many confounding variables (train_loss artifact,
+> batch mismatch, single seed) to draw reliable conclusions about CPU determinism.
+> Original content preserved below for transparency.
 
-**Accidentally rediscovering SGDR led to a new question: can CPU determinism improve the quality of warm restarts? Standard SGDR restarts from a GPU's stochastic position. We restart from a CPU's deterministic position — and in quantized (4-bit) environments, CPU and GPU take measurably different paths.**
+**An exploratory experiment in CPU/GPU hybrid fine-tuning. Original claims of 22% train loss improvement were a measurement artifact. CPU determinism effects could not be isolated from batch size confounds. MMLU warm restart data (4/4 positive direction) remains the only potentially valid signal. Experiment suspended.**
 
 ---
 
@@ -47,19 +66,22 @@ that improves generalization by periodically restarting the learning rate schedu
 (Loshchilov & Hutter, ICLR 2017). It has been widely adopted and is built into
 PyTorch as `CosineAnnealingWarmRestarts`.
 
-**But SGDR always restarts from a GPU's non-deterministic position.** The GPU's stochastic
-execution (cuDNN kernel selection, parallel reduction order, atomic operations) means
-each restart begins from a slightly different, unpredictable point in parameter space.
+We accidentally implemented SGDR through a "design flaw" — using separate cosine
+schedules for Phase1 and Phase2 of split training. We *hypothesized* that **restarting
+from a CPU's deterministic position** (instead of GPU's non-deterministic position)
+might produce better results. However, we discovered confounding variables (batch size
+mismatch, train_loss measurement artifact) that prevent any reliable conclusions about
+CPU determinism.
 
-We accidentally discovered that **restarting from a CPU's deterministic position** may
-produce better results. CPU fp32 training is fully deterministic — same input always
-produces the exact same output. When the warm restart occurs from this deterministic
-anchor point, the subsequent GPU exploration may find better basins.
+**What we confirmed:** bf16 = fp32 in steady-state training, warm restart (SGDR)
+showed 4/4 positive MMLU direction in 7B experiments.
+
+**What we could not confirm:** Whether CPU determinism provides any benefit over GPU.
 
 **Original motivation:** We were trying to give a jellyfish (GPU-only training) a spine
 (CPU deterministic anchor) for voice fine-tuning (Style-Bert-VITS2). The "design flaw"
 of using separate cosine schedules for Phase1 and Phase2 accidentally created a warm
-restart — and it worked.
+restart — but the CPU-specific claims could not survive controlled experiments.
 
 ---
 
@@ -67,17 +89,18 @@ restart — and it worked.
 
 ### Training Loss
 
-| Experiment | Method | Train Loss | vs A | Runtime |
-|---|---|---|---|---|
-| **A** (baseline) | GPU-only, bf16, 500 steps | 1.184 | — | 10m 59s |
-| **F** (GPU restart) | GPU fp32 100 → GPU bf16 400 | **0.9268** | **-21.7%** ⚠️ | 10m 12s |
-| **C** (CPU restart) | CPU fp32 100 → GPU bf16 400 | **0.9177** | **-22.5%** ⚠️ | ~3h + 8m 18s |
-| **G** (CPU restart fp32) | CPU fp32 100 → GPU fp32 400 | **0.9188** | **-22.4%** ⚠️ | ~3h 14m + 14m 06s |
+> ⚠️ **CRITICAL: All split-training train_loss values below are HF Trainer artifacts.**
+> Phase2 resets accumulator but divides by global_step → ~20% artificial deflation.
+> Corrected by multiplying reported value × (500/400) = × 1.25.
 
-> ⚠️ **Errata: train_loss percentages are measurement artifacts.**
-> When HuggingFace Trainer resumes from a checkpoint, it resets the loss accumulator but divides by `global_step` (total steps across both phases). Phase2 trains 400 steps but divides by 500, producing ~20% artificial deflation. Corrected: F = 0.9268 × (500/400) = **1.1585**, C = 0.9177 × (500/400) = **1.1471**, G = 0.9188 × (500/400) = **1.1485**. All are within ~3% of A's 1.184, not 22%.
->
-> This was discovered through 3B full-precision experiments (branch: `3b-full-precision`) where step-by-step comparison confirmed Phase2 loss tracks baseline throughout. **MMLU results remain valid** as they are independent evaluations unaffected by the trainer's loss averaging.
+| Experiment | Method | Reported | **Corrected** | **vs A** | Runtime |
+|---|---|---|---|---|---|
+| **A** (baseline) | GPU-only, bf16, 500 steps | 1.184 | 1.184 | — | 10m 59s |
+| **F** (GPU restart) | GPU fp32 100 → GPU bf16 400 | ~~0.9268~~ | **1.1585** | **-2.2%** | 10m 12s |
+| **C** (CPU restart) | CPU fp32 100 → GPU bf16 400 | ~~0.9177~~ | **1.1471** | **-3.1%** | ~3h + 8m 18s |
+| **G** (CPU restart fp32) | CPU fp32 100 → GPU fp32 400 | ~~0.9188~~ | **1.1485** | **-3.0%** | ~3h 14m + 14m 06s |
+
+**Note on F vs C/G comparison:** F used batch 1×8, C/G used batch 2×4 (effective batch identical at 8, but micro-batch differs). This confounds the F→C gap: the ~1% difference between F (1.1585) and C (1.1471) may reflect batch configuration, not CPU determinism. See Errata at top.
 
 ### MMLU Benchmark (5-shot, limit 200)
 
@@ -93,13 +116,16 @@ restart — and it worked.
 
 **GPU restart vs CPU restart:**
 
+> ⚠️ F used batch 1×8 (Phase1), C/G used batch 2×4. This micro-batch difference
+> confounds the comparison below.
+
 | | F (GPU restart) | G (CPU restart) | Δ (G - F) |
 |---|---|---|---|
 | MMLU Overall | 76.41% | 76.66% | +0.25% |
 | STEM | 69.97% | 70.16% | +0.19% |
 | moral_scenarios | 63.00% | 64.50% | +1.50% |
 
-*G outperformed F in 3/4 categories. Both are warm restarts — the difference is CPU deterministic anchor vs GPU stochastic anchor. Sample size insufficient for significance, but direction is consistent.*
+*G outperformed F in 3/4 categories. Both are warm restarts — the difference is CPU deterministic anchor vs GPU stochastic anchor, BUT also batch 2×4 vs 1×8. Cannot separate these factors. Sample size insufficient for significance.*
 
 ---
 
@@ -132,34 +158,34 @@ The industry assumption that bf16 ≈ fp32 is correct. Precision staging
 (switching from fp32 to bf16 mid-training) produces zero effect when the
 lr schedule is continuous.
 
-### 3. CPU Determinism: Quantization-Dependent
+### 3. CPU Determinism: Inconclusive
 
-CPU determinism effects depend on quantization, not lr schedule or precision:
+> ⚠️ **Original claim "Quantization is the sole variable causing CPU ≠ GPU" has been retracted.**
+
+CPU determinism effects could not be reliably isolated from batch size confounds:
 
 ```
+7B QLoRA 4-bit:
+  F (GPU fp32, batch 1×8) vs C/G (CPU fp32, batch 2×4):
+  Phase1 Δ = 0.82% — but TWO variables changed (device + batch)
+
 3B 16-bit full (no quantization):
-  Continuous lr:    CPU = GPU (Δ ≤ 0.002) — CPU-AA
-  Discontinuous lr: CPU = GPU (Δ ≤ 0.002) — CPU-C (discontinued, confirmed at step 70)
-  → CPU = GPU in ALL conditions tested.
+  CPU (batch 1×8) vs GPU (batch 1×8):    Δ ≤ 0.002 — same batch → identical
+  Tested with both continuous and discontinuous lr: always identical
 
-7B QLoRA 4-bit (quantization):
-  Discontinuous lr: CPU ≠ GPU (Phase1 Δ = 0.82%, Phase2 divergence +20%)
-  → CPU finds different trajectory from GPU.
+3B QLoRA 4-bit (quantization added):
+  CPU (batch 1×8) vs GPU (batch 1×8):    Δ ≤ 0.001 at step 40 — same batch → identical
+  → Adding quantization did NOT cause CPU ≠ GPU when batch was controlled
 ```
 
-★ **Quantization is the sole variable causing CPU ≠ GPU.**
+**Conclusion:** When batch configuration is identical, CPU = GPU regardless of:
+- Quantization (16-bit and 4-bit both identical)
+- lr schedule (continuous and discontinuous both identical)
+- Model size (3B tested)
 
-3B CPU-C was discontinued at step 70/100 because Phase1 loss matched Exp A (GPU)
-at every step (Δ ≤ 0.002). Same anchor → same Phase2 → same MMLU. No scientific
-value in completing the experiment.
-
-**Mechanism (hypothesis):**
-4-bit quantization compresses weights → dequantization introduces rounding noise →
-GPU processes this noise non-deterministically (stochastic path) while CPU processes
-it deterministically (consistent path). Without quantization (16-bit full), there is
-no rounding noise, so CPU and GPU follow identical paths regardless of lr schedule.
-
-**Next step:** 3B QLoRA 4-bit CPU vs GPU to confirm on the same model.
+The 7B "0.82% CPU deeper" finding likely reflects batch 2×4 vs 1×8 difference,
+not CPU vs GPU determinism. This cannot be verified on 7B because VRAM limitations
+prevent running GPU fp32 with batch 2×4.
 
 ### 4. Warm Restart Direction: Train Loss Worsens, MMLU Improves
 
@@ -191,7 +217,7 @@ Learning rate decayed 5x, but loss oscillation only reduced 30%. At lr ≈ 0 (1.
 
 ### 7. Phase2 fp32 Recovers Calculation Ability (Experiment G MMLU)
 
-Despite identical train loss (C: 0.9177 vs G: 0.9188), MMLU tells a different story. Experiment C's STEM decline (-0.14% vs A) was caused by bf16 precision loss, not by the anchor. Experiment G (fp32) recovered STEM (+0.37% vs A) while preserving understanding gains:
+Despite similar corrected train loss (C: 1.1471 vs G: 1.1485), MMLU tells a different story. Experiment C's STEM decline (-0.14% vs A) was caused by bf16 precision loss, not by the anchor. Experiment G (fp32) recovered STEM (+0.37% vs A) while preserving understanding gains:
 
 | Subject | A | C (bf16) | G (fp32) |
 |---|---|---|---|
@@ -201,15 +227,26 @@ Despite identical train loss (C: 0.9177 vs G: 0.9188), MMLU tells a different st
 
 **Same train loss, different knowledge distribution.** Phase2 precision matters for where the model lands within the anchor basin, even under 4-bit QLoRA.
 
-### 8. fp32 Precision Is the Dominant Factor in Train Loss (Experiment F)
+### 8. ~~fp32 Precision Is the Dominant Factor in Train Loss (Experiment F)~~ — INVALIDATED
 
-Experiment F (GPU fp32 100 → GPU bf16 400) achieved train loss 0.9268 — capturing 96.6% of C's improvement over A using GPU alone. The three-factor decomposition *(based on reported train_loss — artifact-affected, see Errata)*:
+> ⚠️ **This section's quantitative claims are invalid.** The "96.6% / 3.4%" decomposition
+> was calculated from artifact-inflated train_loss values AND has a batch size confound
+> (F: batch 1×8, C: batch 2×4). With corrected values the split is ~69% / ~31%, but
+> even this is unreliable because F and C/G used different micro-batch sizes.
 
+Original (artifact-based) decomposition:
 ```
-A → F (fp32 precision only):     -0.2572  (96.6% of total A→C gain)
-F → C (CPU determinism):         -0.0091  ( 3.4% of total A→C gain)
-Total A → C:                     -0.2663  (100%)
+A → F (fp32 precision only):     -0.2572  (96.6%)  ← ARTIFACT
+F → C (CPU determinism):         -0.0091  ( 3.4%)  ← ARTIFACT + BATCH CONFOUND
 ```
+
+Corrected decomposition:
+```
+A → F (fp32 precision + batch change):  -0.0255  (~69%)  ← batch 2×4→1×8 confound
+F → C (device + batch change):          -0.0114  (~31%)  ← batch 1×8→2×4 confound
+```
+
+Neither factor can be cleanly isolated due to batch mismatch.
 
 On MMLU, F outperformed C overall (76.41% vs 76.34%) with a critical difference: **F preserved STEM** (69.97%) while C suppressed it (69.65%). Both used bf16 in Phase2 — the only variable was CPU vs GPU in Phase1. This means CPU determinism improves understanding/judgment but introduces a STEM penalty that GPU's non-deterministic fp32 avoids.
 
@@ -220,52 +257,55 @@ On MMLU, F outperformed C overall (76.41% vs 76.34%) with a critical difference:
 | abstract_algebra | 53.00% | 52.00% ↓ | **53.00%** ✅ | 53.00% |
 | STEM (category) | 69.79% | 69.65% ↓ | **69.97%** ↑ | **70.16%** ↑ |
 
-**Industry implication:** Any lab can improve fine-tuning TODAY by running the first 20% of steps in fp32, then switching to bf16. No CPU required. No special hardware. Just a config change. F also achieved sub-1.0 train loss: No (lowest 1.007), while CPU-anchored C and G both broke through (0.9966 and 0.9983) — suggesting CPU determinism enables access to deeper basins that GPU non-determinism cannot reach.
+**However:** F and C/G used different batch configurations, so even the MMLU comparison between F and C is confounded. The MMLU patterns above may reflect batch differences rather than CPU vs GPU.
 
 ---
 
 ## The Hypothesis
 
-### Original Hypothesis: Precision-Staged Training
+### Original Hypothesis: Precision-Staged Training — Disproved
 
 The industry treats CPU as "slow GPU." Nobody uses CPU for training quality. We originally proposed **Precision-Staged Training** — running the first 20% of fine-tuning in fp32 to create a precise anchor point.
 
 3B experiments disproved the pure precision hypothesis: bf16 = fp32 (3× confirmed), and precision transition with continuous lr has zero effect.
 
-### Revised Hypothesis: CPU-Anchored Warm Restart
+### Revised Hypothesis: ~~CPU-Anchored Warm Restart~~ — Suspended
+
+> ⚠️ **The CPU-Anchored SGDR hypothesis has been suspended** due to unresolved
+> batch confounds. The 7B "evidence" for CPU determinism was confounded with
+> micro-batch size (2×4 vs 1×8). 3B experiments with controlled batch showed
+> CPU = GPU in all conditions tested.
 
 The lr discontinuity we thought was a flaw was actually implementing **SGDR (Warm Restarts)**
 — a proven technique for improving generalization (Loshchilov & Hutter, 2017).
 
-Standard SGDR restarts from a GPU's stochastic position. We propose restarting from
-a CPU's deterministic position:
+Standard SGDR restarts from a GPU's stochastic position. We *hypothesized* that restarting
+from a CPU's deterministic position might produce better results, but could not isolate
+this effect from batch confounds.
 
 | Method | Restart Quality | MMLU vs Baseline | Status |
 |---|---|---|---|
 | **Standard SGDR** | GPU stochastic restart | +0.16% (Exp F) | Known technique |
-| **CPU-Anchored SGDR** | CPU deterministic restart | +0.41% (Exp G) | Our contribution |
+| **CPU-Anchored SGDR** | CPU deterministic restart | +0.41% (Exp G) | **Confounded** (batch differs) |
 | Continuous lr (no restart) | No restart | ±0.00% (Exp AA) | Baseline |
-
-**Why CPU restart may be better:**
-- CPU fp32: Deterministic + high precision. Same input → same output. Always.
-- GPU fp32: High precision but non-deterministic. Same input → different output each time.
-- When SGDR restarts the lr, it "re-explores" from the current position.
-- A deterministic anchor may provide a more precise starting point for re-exploration.
 
 **Why 20%?** Derived from the Prime Number Theorem: 1/ln(100) ≈ 21.71%. This independently converges with the biological ratio of central nervous system to total body mass (~2% brain, ~20% including spinal cord infrastructure).
 
-**Evidence from 7B (QLoRA 4-bit):**
+**Evidence from 7B (QLoRA 4-bit) — CONFOUNDED:**
 ```
-Phase1 (same lr, same precision, same seed):
-  GPU fp32: step 100 loss = 1.100
-  CPU fp32: step 100 loss = 1.091  (0.82% deeper)
+Phase1 (same lr, same precision, same seed, DIFFERENT BATCH):
+  GPU fp32 (batch 1×8): step 100 loss = 1.100     ← Exp F
+  CPU fp32 (batch 2×4): step 100 loss = 1.091     ← Exp C/G
+  Δ = 0.82% — but batch differs, so this is NOT a clean CPU vs GPU comparison
 
-Phase2 (both switched to GPU):
-  A vs AA (lr difference):  83% convergence → same basin
-  F vs C  (CPU difference): 20% divergence → different basins!
+Phase2 (F: batch 2×4, C: batch 2×4):
+  F vs C gap consistent ~0.010-0.014 throughout
+  → inherited from Phase1 divergence (which had batch confound)
 
-= lr differences are temporary. CPU differences are permanent.
-= CPU finds a different region of parameter space.
+3B QLoRA 4-bit (batch 1×8 for both):
+  GPU fp32: step 40 loss = 1.294
+  CPU fp32: step 40 loss = 1.295
+  Δ = 0.001 — when batch is controlled, CPU = GPU
 ```
 
 **Evidence from 3B (16-bit full, no quantization):**
@@ -275,22 +315,16 @@ Discontinuous lr: CPU fp32 = GPU fp32 (Δ ≤ 0.002) — CPU-C (step 10-70)
 
 = Without quantization noise, CPU and GPU follow identical paths.
 = lr schedule does NOT change this — tested with both continuous and discontinuous.
-= ★ Quantization is the sole variable causing CPU ≠ GPU.
 ```
 
 ### The Analogy
 
 Current GPU-only training is a **jellyfish** — no central nervous system, drifting with
-ocean currents (non-deterministic gradients). SGDR gives the jellyfish periodic pushes
-(lr restarts), but each push starts from wherever the current carried it.
+ocean currents (non-deterministic gradients). We tried to give the jellyfish a **spine**
+(CPU deterministic anchor), but couldn't prove the spine actually does anything different
+from a second tentacle (GPU fp32).
 
-CPU-anchor gives the jellyfish a **spine** — each SGDR restart begins from a precisely
-determined position. The spine doesn't control where the jellyfish drifts after each push,
-but it controls where each push begins. GPU decides *how to explore*. CPU decides
-*where to restart from*.
-
-Standard SGDR: jellyfish with periodic pushes (GPU → GPU → GPU)
-CPU-Anchored SGDR: jellyfish with spinal pushes (CPU → GPU, restart from spine)
+The analogy was poetic. The experiments were inconclusive. 🪼
 
 ---
 
@@ -307,17 +341,18 @@ Branch: `3b-full-precision` — Qwen2.5-3B-Instruct, 16-bit full (no quantizatio
 | A | fp32→bf16 (20:80) discont. lr | 0.9801 (artifact) | 69.37% | lr artifact + MMLU noise |
 | AA | fp32→bf16 (20:80) cont. lr | 0.975 (artifact) | pending | Baseline ±0.001 → precision transition = zero effect ✅ |
 | CPU-AA | CPU fp32→GPU bf16 cont. lr | 0.9749 (artifact) | pending | Baseline ±0.002 → CPU determinism = zero in 16-bit ✅ |
-| CPU-C | CPU fp32→GPU bf16 discont. lr | **discontinued** | — | ★ CPU = GPU at step 70 (Δ ≤ 0.002) → quantization confirmed |
+| CPU-C | CPU fp32→GPU bf16 discont. lr | **discontinued** | — | CPU = GPU at step 70 (Δ ≤ 0.002) in 16-bit |
+| **Q-G** | **QLoRA 4-bit CPU fp32→GPU fp32** | **in progress** | — | **CPU = GPU at step 40 (Δ ≤ 0.001) even with 4-bit quantization** |
 
 ### Key 3B Findings
 
 1. **bf16 = fp32** (3× confirmed in 16-bit full)
 2. **Precision transition = zero effect** with continuous lr
-3. **CPU = GPU** in smooth landscape (16-bit, no quantization) — all lr schedules tested
-4. **★ Quantization is the sole variable causing CPU ≠ GPU** — 3B 16-bit: 0%, 7B QLoRA: 0.82%
-5. **Warm restart (SGDR) worsens train_loss** in 16-bit full (+0.52%), opposite of 7B QLoRA
-6. **But MMLU improved in 7B** — warm restart may trade train_loss for generalization
-7. **Next:** 3B QLoRA 4-bit CPU vs GPU to confirm quantization hypothesis on same model
+3. **CPU = GPU** in 16-bit full (no quantization) — all lr schedules tested
+4. **CPU = GPU** in QLoRA 4-bit when batch is controlled (1×8 for both, Δ ≤ 0.001)
+5. **~~Quantization causes CPU ≠ GPU~~** — retracted. 3B QLoRA 4-bit showed CPU = GPU with same batch.
+6. **7B "0.82% CPU deeper"** likely reflects batch 2×4 vs 1×8 difference, not CPU determinism
+7. **Warm restart (SGDR) worsens train_loss** in 16-bit full (+0.52%), but MMLU improved in 7B
 
 ---
 
@@ -352,7 +387,13 @@ cutoff_len: 512
 F Phase1 uses batch 1 × accum 8 to fit fp32 in 24GB VRAM, Phase2 uses 2×4=8.
 G uses batch 1 × accum 8 throughout (effective batch = 8, identical).
 
-**Only difference:** Device (CPU/GPU) + Precision (fp32/bf16)
+> ⚠️ **Batch confound:** F and G Phase1 use batch 1×8, while A and C use batch 2×4.
+> Although effective batch size is identical (8), micro-batch size affects gradient
+> accumulation order and floating-point rounding. This confounds the F vs C/G Phase1
+> comparison and invalidates the "CPU determinism" decomposition.
+
+**Intended only difference:** Device (CPU/GPU) + Precision (fp32/bf16)
+**Actual differences:** Device + Precision + **Micro-batch size** (unintended confound)
 
 ### Steps to Reproduce
 
@@ -401,12 +442,13 @@ Trained LoRA adapters are hosted on HuggingFace:
 ## Limitations
 
 - **⚠️ train_loss artifact:** The reported 21.7–22.5% train loss improvements are measurement artifacts caused by HuggingFace Trainer's resume logic. Corrected Phase2 averages are within ~3% of baseline. MMLU is the only valid cross-experiment metric.
+- **⚠️ Batch confound:** Experiments F and G (GPU fp32 Phase1) used batch 1×8 due to VRAM constraints, while A and C used batch 2×4. This micro-batch mismatch confounds the F vs C/G comparison and invalidates the "CPU determinism" decomposition. 3B experiments with controlled batch (1×8 for both) showed CPU = GPU.
 - **Scale:** 500 steps / 0.077 epochs. Mini-experiment only.
 - **Single seed:** 7B: seed=42, 3B: seed=5108. No repetition. Statistical power limited.
 - **SGDR vs our implementation:** Standard SGDR uses the same optimizer throughout. Our implementation saves/loads checkpoints across phases, which may affect optimizer state differently.
 - **Benchmark sensitivity:** MMLU on a strong base model (Qwen2.5-7B, ~75% baseline) leaves little room for differentiation at 500 steps.
 - **MMLU subset:** Due to 24GB VRAM constraint, evaluated with `--limit 200` (200 samples per subject).
-- **Hardware:** Tested on a gaming laptop (HP Omen), not server-grade hardware.
+- **Hardware:** Tested on a gaming laptop (HP Omen), not server-grade hardware. Cannot run GPU fp32 batch 2×4 on 7B to resolve the batch confound.
 - **3B vs 7B confounds:** 3B (16-bit full) and 7B (QLoRA 4-bit) differ in quantization, model size, seed, and LoRA configuration — direct comparison requires caution.
 
 ---
@@ -420,24 +462,21 @@ Trained LoRA adapters are hosted on HuggingFace:
 - ~~Does CPU determinism help with continuous lr + no quantization?~~ **No.** CPU-AA = Baseline ±0.002.
 - ~~Does CPU determinism help with discontinuous lr + no quantization?~~ **No.** CPU-C = Exp A ±0.002 (discontinued at step 70).
 - ~~Is the 22% train loss improvement real?~~ **No.** Measurement artifact (HF Trainer resume logic).
-- ~~Does GPU fp32-only training match the anchor effect?~~ **Answered by Experiment F:** On reported train_loss (artifact-affected), GPU fp32 captures 96.6%. On MMLU, F (76.41%) > C (76.34%) with STEM preserved.
-- ~~Does CPU determinism require quantization noise?~~ **Yes.** 3B 16-bit: CPU = GPU (both lr schedules). 7B QLoRA 4-bit: CPU ≠ GPU (0.82%). ★ Quantization is the sole variable.
+- ~~Does CPU determinism require quantization noise?~~ **Retracted.** 3B QLoRA 4-bit with same batch (1×8) → CPU = GPU (Δ ≤ 0.001). 7B "0.82%" was confounded with batch mismatch (2×4 vs 1×8).
+- ~~Does GPU fp32-only training match the anchor effect?~~ **Inconclusive.** F used batch 1×8 while A/C used 2×4. The "96.6% precision" decomposition was artifact-based AND batch-confounded.
 
-### Active Investigation
+### Unresolved (Experiment Suspended)
 
-1. **3B QLoRA 4-bit: Does quantization create CPU ≠ GPU on the same model?** Same 3B model + add 4-bit quantization → if CPU ≠ GPU: quantization confirmed 100%. If CPU = GPU: model size is variable (unexpected).
-2. **Does warm restart (SGDR) consistently improve MMLU in fine-tuning?** 7B: 4/4 positive. 3B: MMLU evaluation pending (AA, CPU-AA).
-3. **Multi-cycle CPU-anchored SGDR:** Does [CPU→GPU] × N restarts amplify the effect? (2+ epoch experiment planned)
-4. **Multiple seeds:** Current results from single seeds only. Reproducibility with 3+ seeds needed.
+1. **Was the 7B "CPU ≠ GPU" caused by batch (2×4 vs 1×8) or CPU determinism?** Cannot verify — GPU fp32 batch 2×4 OOMs on 24GB VRAM. Would require server-grade hardware.
+2. **Does warm restart (SGDR) consistently improve MMLU?** 7B: 4/4 positive (within stderr). Suggestive but single-seed, and F vs C/G batch-confounded.
+3. **Is the ~3% corrected train_loss improvement real?** All split experiments (F, C, G) showed ~2-3% lower corrected loss than A. But this could be SGDR effect, batch effect, or optimizer state artifact.
 
-### Future Directions
+### Abandoned
 
-5. Does the MMLU gap emerge at full scale (1 epoch+, 6500+ steps)?
-6. What is the optimal restart ratio? (10%? 20%? Multiple restarts?)
-7. Does CPU-Anchored SGDR with multiple restarts (CPU→GPU→CPU→GPU...) amplify the effect?
-8. Does fp64 CPU anchor provide a deeper basin than fp32 CPU anchor?
-9. Does high-quality data (LIMA, Orca) + CPU-anchored SGDR amplify the effect?
-10. Do alternative benchmarks (TruthfulQA, needle-in-a-haystack) capture warm restart effects?
+4. ~~Multi-cycle CPU-anchored SGDR~~ — CPU determinism hypothesis suspended.
+5. ~~Multiple seeds~~ — Experiment suspended before seed variation.
+6. ~~Optimal restart ratio~~ — Experiment suspended.
+7. ~~fp64 CPU anchor~~ — Experiment suspended.
 
 ---
 
@@ -448,11 +487,12 @@ Trained LoRA adapters are hosted on HuggingFace:
 | A | GPU bf16 500 steps | ✅ Done | Baseline |
 | B | CPU fp32 500 steps | ⬜ Not run | ~21 hours on laptop CPU |
 | C | CPU fp32 100 → GPU bf16 400 | ✅ Done | CPU warm restart |
-| D | CPU fp32 15% → GPU bf16 85% | ⬜ Not run | Equipment limitation |
-| E | GPU bf16 → CPU fp32 (reverse) | ⬜ Not run | Equipment limitation |
+| D | CPU fp32 15% → GPU bf16 85% | ⬜ Abandoned | Experiment suspended |
+| E | GPU bf16 → CPU fp32 (reverse) | ⬜ Abandoned | Experiment suspended |
 | F | GPU fp32 100 → GPU bf16 400 | ✅ Done | GPU warm restart (= standard SGDR) |
 | G | CPU fp32 100 → GPU fp32 400 | ✅ Done | CPU warm restart + fp32 Phase2 |
-| H | CPU fp64 100 → GPU fp32 400 | ⬜ Not run | Double-precision CPU anchor test |
+| H | CPU fp64 100 → GPU fp32 400 | ⬜ Abandoned | Experiment suspended |
+| **Q-G** | **3B QLoRA 4-bit CPU fp32 → GPU fp32** | **⏸️ Partial** | **CPU = GPU at step 40 (Δ ≤ 0.001) — batch confound discovered** |
 
 ---
 
@@ -471,10 +511,10 @@ MIT License. Use freely. If this changes how you train models, a citation would 
 
 ## Acknowledgments
 
-- **HP Omen** (RTX 5090 Laptop, 24GB VRAM) — World's first CPU-anchor experiment, on a gaming laptop
+- **HP Omen** (RTX 5090 Laptop, 24GB VRAM) — Where this all happened
 - **Qwen** (Alibaba) — Base model
 - **LlamaFactory** — Training framework
 - **EleutherAI** — lm-evaluation-harness
-- **Damione** (HuggingFace) — Suggested the GPU fp32→bf16 isolation experiment (Experiment F) to separate precision from determinism
+- **Damione** (HuggingFace) — Suggested the GPU fp32→bf16 isolation experiment (Experiment F)
 - **Loshchilov & Hutter** — SGDR: Warm Restarts technique that our "design flaw" accidentally rediscovered
-- 🪼 — The jellyfish
+- 🪼 — The jellyfish (still spineless, as it turns out)
