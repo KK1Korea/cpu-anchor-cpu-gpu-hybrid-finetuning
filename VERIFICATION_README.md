@@ -151,10 +151,10 @@ Per group:  A + C + G + 3× MMLU = ~8.5 hours
 
 | File | Content |
 |------|---------|
-| `Group_1.md` | Seed 42 — complete data (A, C, G train loss + MMLU) |
-| `Group_2.md` | Seed 1234 — template (to be filled) |
-| `Group_3.md` | Seed 5108 — template (to be filled) |
 | `VERIFICATION_README.md` | This file — experiment design & criteria |
+| `Test_Group/Group_1.md` | Seed 42 — complete data (A, C, G train loss + MMLU) |
+| `Test_Group/Group_2.md` | Seed 1234 — template (to be filled) |
+| `Test_Group/Group_3.md` | Seed 5108 — template (to be filled) |
 
 ---
 
