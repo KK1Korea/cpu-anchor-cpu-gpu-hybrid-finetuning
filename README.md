@@ -26,51 +26,31 @@
 > A→F = 0.0255, F→C = 0.0114, giving ~69% / ~31%. But this is also unreliable
 > because of the batch confound below.
 >
-> **3. Batch size confound CONFIRMED by 7B direct comparison.**
+> **3. Exp F divergence was a YAML config error, not batch or precision.**
 >
-> | Experiment | Phase1 batch | Phase1 device | Phase1 precision |
-> |---|---|---|---|
-> | A | 2×4=8 | GPU | bf16 |
-> | C, G | 2×4=8 | CPU | fp32 |
-> | F | 1×8=8 | GPU | fp32 |
+> F Phase1 yaml was missing 3 fields present in all other experiments:
+> `trust_remote_code`, `quantization_method: bitsandbytes`, `dataloader_num_workers: 0`.
+> When F was re-run with the complete config (identical to A except `bf16: false`),
+> it matched A/C/G perfectly (Δ ≤ 0.003). The original F divergence (Δ = 0.029)
+> was caused by the missing config fields (likely `dataloader_num_workers` changing
+> data loading order).
 >
-> **7B Phase1 step-by-step (direct from Exp A training log):**
+> **Result: CPU = GPU = bf16 = fp32 = batch 2×4 = batch 1×8. Everything is identical.**
 >
-> | Step | A (GPU bf16, 2×4) | C/G (CPU fp32, 2×4) | Δ A vs C/G | F (GPU fp32, 1×8) | Δ A vs F |
-> |---|---|---|---|---|---|
-> | 10 | 2.130 | 2.131 | +0.001 | 2.117 | -0.013 |
-> | 20 | 1.943 | 1.944 | +0.001 | 1.915 | -0.028 |
-> | 30 | 1.270 | 1.272 | +0.002 | 1.274 | +0.004 |
-> | 40 | 1.201 | 1.201 | 0.000 | 1.230 | **+0.029** |
-> | 50 | 1.184 | 1.184 | 0.000 | 1.192 | +0.008 |
-> | 60 | 1.115 | 1.115 | 0.000 | 1.123 | +0.008 |
-> | 70 | 1.176 | 1.178 | +0.002 | 1.191 | +0.015 |
-> | 80 | 1.087 | 1.090 | +0.003 | 1.104 | **+0.017** |
-> | 90 | 1.187 | 1.192 | +0.005 | 1.204 | **+0.017** |
-> | 100 | 1.088 | 1.091 | +0.003 | 1.100 | **+0.012** |
->
-> **Three things proven simultaneously on 7B QLoRA 4-bit:**
-> 1. **CPU = GPU** when batch matches (A vs C/G: Δ ≤ 0.005, same 2×4 batch)
-> 2. **bf16 = fp32** on 7B too (A bf16 vs C/G fp32: Δ ≤ 0.005)
-> 3. **Batch 2×4 ≠ 1×8** is the sole divergence source (F: Δ = 0.012–0.029)
->
-> *Caveat: A uses 500-step cosine while C/G use 100-step cosine, so lr schedules
-> diverge after warmup. However, even at step 80–100 where lr differs ~5× (A: 9.7e-5
-> vs C/G: 2.1e-5), loss Δ remains ≤ 0.005. The lr caveat cannot explain F's 0.029 gap.*
->
-> **4. "Quantization causes CPU ≠ GPU" is DISPROVED.**
-> - 7B direct: A (GPU bf16, 2×4) = C/G (CPU fp32, 2×4) at Δ ≤ 0.005
-> - 3B QLoRA 4-bit: CPU = GPU at Δ ≤ 0.002 (batch 1×8 controlled)
-> - Only F diverges — the only experiment with different batch (1×8)
+> **4. All original "CPU determinism" claims are DISPROVED.**
+> - A (GPU bf16, 2×4) = C/G (CPU fp32, 2×4) at Δ ≤ 0.005
+> - New (GPU bf16, 1×8) = A (GPU bf16, 2×4) at Δ ≤ 0.005
+> - F-test (GPU fp32, 1×8, fixed config) = A at Δ ≤ 0.003
+> - 3B QLoRA 4-bit: CPU = GPU at Δ ≤ 0.002
+> - Original F was the ONLY outlier — caused by yaml config error
 >
 > **What remains valid:**
 > - MMLU data (independent evaluation, unaffected by train_loss artifact)
 > - MMLU warm restart improvement: 4/4 positive direction (within stderr individually)
-> - bf16 = fp32 in steady-state training (3× confirmed 3B 16-bit full + **7B QLoRA direct**)
+> - bf16 = fp32 in steady-state training (4× confirmed: 3B 16-bit 3× + 7B QLoRA direct)
 > - Precision transition with continuous lr = zero effect (3B Exp AA)
 > - GPU hardware noise floor observation
 > - Zero transition shock between phases
-> - **Micro-batch size (2×4 vs 1×8) causes measurable loss divergence in QLoRA 4-bit**
 >
 > **Experiment concluded.** CPU determinism hypothesis disproved. Batch mismatch
 > was the sole source of the original "CPU ≠ GPU" signal. Original content preserved
@@ -504,18 +484,18 @@ Trained LoRA adapters are hosted on HuggingFace:
 - ~~Was the 7B "0.82%" caused by batch or CPU determinism?~~ **Batch.** Exp A (GPU, batch 2×4) matches C/G (CPU, batch 2×4) at Δ ≤ 0.005. Only F (batch 1×8) diverges at Δ = 0.029. Direct 7B evidence.
 - ~~Does GPU fp32-only training match the anchor effect?~~ **Batch artifact.** F used batch 1×8 while A/C used 2×4. The train_loss decomposition was invalid (artifact + batch confound).
 
-### Unresolved (Experiment Suspended)
+### Unresolved (Experiment Concluded)
 
 1. **Why does micro-batch size (2×4 vs 1×8) affect QLoRA 4-bit training?** The mechanism is unclear. Same effective batch (8), but gradient accumulation order differs → floating-point rounding divergence. Not investigated further.
 2. **Does warm restart (SGDR) consistently improve MMLU?** 7B: 4/4 positive (within stderr). Suggestive but single-seed. F vs C/G MMLU comparison confounded by batch.
-3. **MMLU for AA, CPU-AA:** Never evaluated. Experiment suspended.
+3. **MMLU for AA, CPU-AA:** Never evaluated. Experiment concluded.
 
 ### Abandoned
 
 4. ~~Multi-cycle CPU-anchored SGDR~~ — CPU determinism hypothesis disproved.
-5. ~~Multiple seeds~~ — Experiment suspended before seed variation.
-6. ~~Optimal restart ratio~~ — Experiment suspended.
-7. ~~fp64 CPU anchor~~ — Experiment suspended.
+5. ~~Multiple seeds~~ — Experiment concluded before seed variation.
+6. ~~Optimal restart ratio~~ — Experiment concluded.
+7. ~~fp64 CPU anchor~~ — Experiment concluded.
 
 ---
 
@@ -526,11 +506,11 @@ Trained LoRA adapters are hosted on HuggingFace:
 | A | GPU bf16 500 steps | ✅ Done | Baseline |
 | B | CPU fp32 500 steps | ⬜ Not run | ~21 hours on laptop CPU |
 | C | CPU fp32 100 → GPU bf16 400 | ✅ Done | CPU warm restart |
-| D | CPU fp32 15% → GPU bf16 85% | ⬜ Abandoned | Experiment suspended |
-| E | GPU bf16 → CPU fp32 (reverse) | ⬜ Abandoned | Experiment suspended |
+| D | CPU fp32 15% → GPU bf16 85% | ⬜ Abandoned | Experiment concluded |
+| E | GPU bf16 → CPU fp32 (reverse) | ⬜ Abandoned | Experiment concluded |
 | F | GPU fp32 100 → GPU bf16 400 | ✅ Done | GPU warm restart (= standard SGDR) |
 | G | CPU fp32 100 → GPU fp32 400 | ✅ Done | CPU warm restart + fp32 Phase2 |
-| H | CPU fp64 100 → GPU fp32 400 | ⬜ Abandoned | Experiment suspended |
+| H | CPU fp64 100 → GPU fp32 400 | ⬜ Abandoned | Experiment concluded |
 | **Q-G** | **3B QLoRA 4-bit CPU fp32 → GPU fp32** | **⏸️ Partial** | **CPU = GPU at step 40 (Δ ≤ 0.001) — batch confound discovered** |
 
 ---
