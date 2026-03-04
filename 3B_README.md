@@ -4,11 +4,11 @@
 
 Validate the CPU-Anchor effect discovered in 7B QLoRA 4-bit experiments **without the quantization bottleneck**.
 
-> ⚠️ **EXPERIMENT SUSPENDED (2026-03-04)**
-> 3B QLoRA 4-bit experiment (BF-8) showed CPU = GPU even with quantization,
-> when batch size is controlled. The 7B "0.82% CPU deeper" finding was likely
-> a micro-batch confound (2×4 vs 1×8), not CPU determinism or quantization.
-> See BF-8 for details.
+> ⚠️ **EXPERIMENT CONCLUDED (2026-03-04)**
+> CPU determinism hypothesis **disproved**. 7B direct evidence: Exp A (GPU bf16,
+> batch 2×4) = C/G (CPU fp32, batch 2×4) at Δ ≤ 0.005. CPU = GPU on 7B too.
+> The "0.82% CPU deeper" was entirely micro-batch confound (F: 1×8 vs C/G: 2×4).
+> 3B QLoRA 4-bit (BF-8) independently confirmed CPU = GPU with controlled batch.
 
 | Item | 7B (Completed) | 3B (Completed) |
 |------|----------------|--------------|
@@ -308,8 +308,9 @@ Finding: CPU = GPU in ALL conditions tested on 3B:
 └────────────────────────┴──────────────────┴──────────────────┴──────────────────┘
 
 ★ 3B QLoRA 4-bit CPU = GPU DISPROVES "quantization causes CPU ≠ GPU"
-★ 7B "0.82%" is the ONLY case where batch differed → likely batch artifact
-★ "Quantization is the sole variable" — RETRACTED
+★ 7B Exp A (GPU bf16, 2×4) = C/G (CPU fp32, 2×4) at Δ ≤ 0.005 — DIRECT 7B PROOF
+★ 7B "0.82%" came from F's different batch (1×8) — ONLY F diverges
+★ "Quantization is the sole variable" — RETRACTED → Batch is the sole variable
 ```
 
 ---
@@ -374,24 +375,24 @@ Sheet 8: Long-Context    — RULER/Multi-hop results + length-wise charts
 
 ### Answered
 
-- ~~Does bf16 = fp32?~~ **Yes.** 3× confirmed (A-1 vs Baseline, Exp A convergence, Exp AA).
+- ~~Does bf16 = fp32?~~ **Yes.** 3× confirmed (A-1 vs Baseline, Exp A convergence, Exp AA) + **7B direct** (A bf16 vs C/G fp32, Δ ≤ 0.005).
 - ~~Does precision staging help?~~ **No.** With continuous lr, zero effect (±0.001).
 - ~~Does CPU determinism help in 16-bit?~~ **No.** CPU = GPU in all conditions (±0.002).
 - ~~Does lr schedule change CPU vs GPU?~~ **No.** Both continuous and discontinuous: CPU = GPU.
-- ~~Does quantization create CPU ≠ GPU?~~ **No (retracted).** 3B QLoRA 4-bit with same batch → CPU = GPU (±0.002). 7B "0.82%" was batch confound.
+- ~~Does quantization create CPU ≠ GPU?~~ **No (disproved).** 3B QLoRA 4-bit: CPU = GPU (±0.002). 7B direct: A (GPU, 2×4) = C/G (CPU, 2×4) at Δ ≤ 0.005.
+- ~~Was 7B "0.82%" batch or CPU determinism?~~ **Batch.** 7B Exp A directly matches C/G (same batch 2×4). Only F (batch 1×8) diverges.
 
-### Unresolved (Experiment Suspended)
+### Unresolved (Experiment Concluded)
 
-1. **Was the 7B "0.82%" caused by batch (2×4 vs 1×8) or something else?** Cannot verify — GPU fp32 batch 2×4 OOMs on 24GB VRAM.
+1. **Why does micro-batch size (2×4 vs 1×8) affect QLoRA 4-bit training?** Mechanism unclear. Not investigated further.
 2. **Does warm restart (SGDR) consistently improve MMLU?** 7B: 4/4 positive. 3B: eval abandoned.
-3. **Does micro-batch size (1×8 vs 2×4) systematically affect QLoRA training?** Untested.
 
 ### Abandoned
 
-4. ~~Multi-cycle CPU-anchored SGDR~~ — CPU determinism hypothesis suspended.
-5. ~~Multiple seeds~~ — Experiment suspended before seed variation.
-6. ~~fp64 CPU anchor~~ — Experiment suspended.
-7. ~~Long-context benchmarks~~ — Experiment suspended.
+3. ~~Multi-cycle CPU-anchored SGDR~~ — CPU determinism hypothesis disproved.
+4. ~~Multiple seeds~~ — Experiment concluded before seed variation.
+5. ~~fp64 CPU anchor~~ — Experiment concluded.
+6. ~~Long-context benchmarks~~ — Experiment concluded.
 
 ---
 
@@ -420,5 +421,5 @@ GitHub: cpu-anchor-cpu-gpu-hybrid-finetuning/
 
 ---
 
-*Last updated: 2026-03-04 (experiment suspended)*
+*Last updated: 2026-03-04 (experiment concluded — CPU determinism disproved)*
 *Project Jellyfish 🪼 — CPU-Anchor Hybrid Fine-tuning Research (concluded)*
