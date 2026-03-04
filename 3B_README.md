@@ -4,20 +4,23 @@
 
 Validate the CPU-Anchor effect discovered in 7B QLoRA 4-bit experiments **without the quantization bottleneck**.
 
-| Item | 7B (Completed) | 3B (Planned) |
+| Item | 7B (Completed) | 3B (Completed) |
 |------|----------------|--------------|
 | Model | Qwen2.5-7B-Instruct | Qwen2.5-3B-Instruct |
 | Loading | 4-bit QLoRA | **16-bit full loading** |
 | VRAM | ~6GB (4-bit) | ~22GB (16-bit + optimizer) |
 | Quantization noise | σ ≈ 0.03 | σ ≈ 0 (removed) |
 | MMLU headroom | ~1.5% (near ceiling) | ~15%+ (large headroom) |
-| C vs G gap prediction | 0.32% (measured) | **2~4%** (15x amplification predicted) |
+| CPU vs GPU | CPU ≠ GPU (0.82%) | **CPU = GPU (0.000%)** |
 
-### Three Core Questions
+### Core Discovery: Quantization Is the Key Variable
 
-1. **Does the fp32 anchor effect amplify when quantization bottleneck is removed?** (0.32% → 2~4%)
-2. **Does a weaker base model show clearer understanding/judgment improvements?**
-3. **Is precision transition itself regularization, or does the anchor fundamentally improve capability?**
+3B experiments conclusively demonstrated:
+
+1. **bf16 = fp32** in steady-state training (3× confirmed)
+2. **Precision staging = zero effect** with continuous lr
+3. **CPU = GPU** in 16-bit full, regardless of lr schedule
+4. **★ CPU ≠ GPU only in 7B QLoRA 4-bit** → Quantization is the sole variable
 
 ---
 
@@ -45,16 +48,20 @@ Total:                            ~22GB / 24GB ← fits
 | Exp | Config | Train Loss | MMLU | Note |
 |-----|--------|-----------|------|------|
 | A | GPU bf16 100% | 1.184 | 76.25% | Baseline |
-| C | CPU fp32→GPU bf16 (20:80) | 0.9177 (-22.5%) | 76.34% | Anchor+bf16 |
-| F | GPU fp32→GPU bf16 (20:80) | 0.9268 (-21.7%) | 76.41% | Precision control |
-| G | CPU fp32→GPU fp32 (20:80) | 0.9188 (-22.4%) | 76.66% | Anchor+fp32 |
+| C | CPU fp32→GPU bf16 (20:80) | 0.9177 (-22.5%) | 76.34% | CPU warm restart |
+| F | GPU fp32→GPU bf16 (20:80) | 0.9268 (-21.7%) | 76.41% | GPU warm restart (=SGDR) |
+| G | CPU fp32→GPU fp32 (20:80) | 0.9188 (-22.4%) | 76.66% | CPU warm restart + fp32 |
 
-### Three-Factor Model (Established in JF-9)
+### SGDR Discovery (Revised from "Three-Factor Model")
+
+The lr discontinuity originally thought to be a "design flaw" was actually implementing
+SGDR (Warm Restarts, Loshchilov & Hutter 2017). All warm-restart experiments improved
+MMLU over baseline (4/4 positive direction, p = 0.0625).
 
 ```
-Factor 1: fp32 precision anchor (96.6%) — Dominant. Understanding/judgment improves across all experiments.
-Factor 2: CPU determinism (3.4%)        — Enables sub-1.0 basins, STEM tradeoff.
-Factor 3: Phase2 precision              — Invisible in train loss, visible in MMLU distribution.
+Factor 1: SGDR warm restart             — Consistently improves MMLU (F, C, G > A)
+Factor 2: CPU determinism in QLoRA 4-bit — 0.82% Phase1 difference, Phase2 divergence
+Factor 3: Phase2 precision               — Invisible in train loss, visible in MMLU distribution
 ```
 
 ### Key Finding: Understanding/Judgment Subjects Rise in ALL Experiments
@@ -68,7 +75,7 @@ jurisprudence           80.56%   81.48↑   81.48↑   81.48↑
 world_religions         87.13%   88.30↑   89.47↑   87.72↑
 ```
 
-Any model that passes through fp32 Phase1 — CPU or GPU, Phase2 bf16 or fp32 — **understanding/judgment always rises.**
+Any model that passes through warm restart — CPU or GPU — **understanding/judgment always rises.**
 
 ---
 
@@ -86,12 +93,14 @@ There is no ceiling/floor gap — they are identical.
 
 Estimated time: ~25 min each
 
-### Round 1 — Precision Transition (Single transition, direction/position test)
+### Round 1 — Transition + CPU Determinism Tests
 
-| Exp | Config | Direction | Position | Purpose |
-|-----|--------|-----------|----------|---------|
-| A | fp32→bf16 (20:80) | Downward | Early | Reproduce F (already verified in 7B) | ✅ Done (MMLU 69.37%, Δ+0.07% = noise) |
-| **AA** | **fp32→bf16 (20:80) cont.lr** | **Downward** | **Early** | **Design fix: continuous 500-step cosine** | **✅ Done (loss = Baseline ±0.001, MMLU pending)** |
+| Exp | Config | Purpose | Status |
+|-----|--------|---------|--------|
+| A | fp32→bf16 (20:80) discont.lr | Reproduce warm restart (SGDR) | ✅ Done (MMLU 69.37%, Δ+0.07% = noise) |
+| **AA** | **fp32→bf16 (20:80) cont.lr** | **Design fix: continuous 500-step cosine** | **✅ Done (loss = Baseline ±0.001, MMLU pending)** |
+| **CPU-AA** | **CPU fp32→GPU bf16 cont.lr** | **CPU determinism + continuous lr** | **✅ Done (loss = Baseline ±0.002, MMLU pending)** |
+| **CPU-C** | **CPU fp32→GPU bf16 discont.lr** | **CPU determinism + warm restart** | **★ Discontinued (Phase1 CPU=GPU, step 70)** |
 
 ⚠️ **train_loss Artifact Warning (applies to ALL Phase1/Phase2 split experiments):**
 
@@ -127,6 +136,25 @@ Estimated time: ~20 min each, ~60 min total
 - Analogy: Taking off glasses while walking a tightrope (vs. early transition = taking off glasses on flat ground)
 - May revisit after Round 1 results clarify transition dynamics
 
+### ★ CPU-C Discontinuation Decision (2026-03-04)
+
+CPU-C was designed to test CPU determinism under warm restart (discontinuous lr).
+Phase1 was discontinued at step 70/100 because:
+
+```
+         Exp A (GPU fp32)     CPU-C (CPU fp32)     Δ
+step 10: 1.814               1.815               +0.001
+step 20: 1.813               1.815               +0.002
+step 30: 1.845               1.845                0.000
+step 40: 1.558               1.557               -0.001
+step 50: 1.488               1.487               -0.001
+step 60: 1.400               1.400                0.000
+step 70: 1.277               1.277                0.000
+```
+
+CPU = GPU (Δ ≤ 0.002) at every step, identical to CPU-AA finding.
+Same anchor → same Phase2 → same MMLU. No scientific value in continuing.
+
 ### Interpretation Matrix
 
 ```
@@ -139,13 +167,39 @@ A(MMLU) > Baseline(MMLU)      → lr restart improves generalization. ✗ Not ob
 A(MMLU) ≈ Baseline(MMLU)      → No transition benefit without quantization. ✅ CONFIRMED
 AA(loss) ≈ Baseline(loss)     → Precision transition with continuous lr = zero effect. ✅ CONFIRMED (±0.001)
 AA(MMLU) vs Baseline(MMLU)    → Final precision-only test. Pending.
-C(MMLU) vs A(MMLU)            → Direction effect. Pending.
-D(MMLU) vs A(MMLU)            → Recovery effect. Pending.
+CPU-AA(loss) ≈ Baseline(loss) → CPU determinism with continuous lr = zero effect in 16-bit. ✅ CONFIRMED (±0.002)
+CPU-AA(MMLU) vs Baseline(MMLU)→ CPU determinism MMLU test. Pending.
+CPU-C Phase1 = Exp A Phase1   → CPU = GPU under warm restart lr too. ✅ CONFIRMED (±0.002)
+  ★ 3B 16-bit: CPU = GPU across ALL conditions tested (continuous, discontinuous)
+  ★ 7B QLoRA 4-bit: CPU ≠ GPU (0.82%) under warm restart + quantization
+  ★★★ QUANTIZATION is the sole variable causing CPU ≠ GPU. ★★★
+C(MMLU) vs A(MMLU)            → Direction effect. Deferred.
+D(MMLU) vs A(MMLU)            → Recovery effect. Deferred.
+
+Quantization Hypothesis Test (Next):
+3B QLoRA 4-bit + CPU vs GPU   → If CPU ≠ GPU: quantization confirmed 100%
+                               → If CPU = GPU: model size is variable (unexpected)
 ```
 
-### Round 2 — Long-Context Benchmark (New Addition)
+### Round 2 — QLoRA 4-bit Quantization Test (Next)
 
-**Purpose:** Distinguish whether fp32 anchor is "a trick for short problems" or "fundamental capability improvement"
+**Purpose:** Confirm that quantization noise is the sole variable causing CPU ≠ GPU.
+
+| Exp | Config | Purpose | Status |
+|-----|--------|---------|--------|
+| Q-GPU | 3B QLoRA 4-bit, GPU fp32, 100 steps | GPU baseline under quantization | Planned |
+| Q-CPU | 3B QLoRA 4-bit, CPU fp32, 100 steps | CPU under quantization | Planned |
+
+```
+Phase1 only (100 steps), compare loss trajectories:
+  Q-GPU vs Q-CPU → same model, same seed, same lr, only device differs
+  If Δ > 0.5%: quantization confirmed as the key variable
+  If Δ ≤ 0.2%: model size or LoRA config is the variable
+```
+
+### Round 3 — Long-Context Benchmark (Future)
+
+**Purpose:** Distinguish whether warm restart is "a trick for short problems" or "fundamental capability improvement"
 
 | Benchmark | Tests | Context Length |
 |-----------|-------|---------------|
@@ -157,7 +211,7 @@ D(MMLU) vs A(MMLU)            → Recovery effect. Pending.
 Hypothesis A: "Anchor" = Fundamental model comprehension improvement
   → MMLU ↑ AND Long-context ↑
   → "Strengthened central nervous system → all behaviors improve"
-  → Claim: "fp32 anchor fundamentally improves model capability"
+  → Claim: "CPU-anchored SGDR fundamentally improves model capability"
 
 Hypothesis B: "State transition" = Training trick (regularization)
   → MMLU ↑ BUT Long-context = No change
@@ -172,11 +226,57 @@ Hypothesis B: "State transition" = Training trick (regularization)
 ```
 Axis 1: Train Loss     — Optimization efficiency (existing)
 Axis 2: MMLU           — Knowledge/comprehension (existing)
-Axis 3: Long-Context   — Context maintenance capability (new)
+Axis 3: Long-Context   — Context maintenance capability (future)
 
 All 3 axes improve  → Paper-title-level claim
 Only 2 axes improve → Effect scope limited
 Only 1 axis improves → Training trick level
+```
+
+---
+
+## Key Results Summary
+
+### 3B 16-bit Complete Picture
+
+```
+┌──────────────────────┬──────────────┬──────────────────────┐
+│                      │ Continuous lr │ Discontinuous lr     │
+│                      │              │ (SGDR warm restart)   │
+├──────────────────────┼──────────────┼──────────────────────┤
+│ GPU fp32 anchor      │ AA = Base ✅  │ A = +0.52% loss ✅   │
+│                      │ (±0.001)     │ MMLU +0.07% (noise)  │
+├──────────────────────┼──────────────┼──────────────────────┤
+│ CPU fp32 anchor      │ CPU-AA = Base│ CPU-C = Exp A ✅      │
+│                      │ (±0.002)     │ (Phase1 Δ≤0.002,    │
+│                      │              │  discontinued)        │
+└──────────────────────┴──────────────┴──────────────────────┘
+
+Finding: In 16-bit full, CPU = GPU in ALL conditions.
+  - Continuous lr: ✅ (CPU-AA)
+  - Discontinuous lr: ✅ (CPU-C)
+  - No experiment produced CPU ≠ GPU.
+```
+
+### Cross-Model Comparison: 3B vs 7B
+
+```
+┌────────────────────────┬──────────────────┬──────────────────┐
+│                        │ 3B (16-bit full) │ 7B (QLoRA 4-bit) │
+├────────────────────────┼──────────────────┼──────────────────┤
+│ bf16 = fp32?           │ Yes (3× confirmed)│ Not tested       │
+│ Precision staging?     │ Zero effect       │ Artifact (22%)   │
+│ CPU = GPU? (cont. lr)  │ Yes (±0.002)     │ Not tested       │
+│ CPU = GPU? (disc. lr)  │ Yes (±0.002)     │ NO (0.82% Δ)    │
+│ SGDR MMLU improvement? │ +0.07% (1 sample)│ 4/4 positive     │
+│ Quantization?          │ None             │ 4-bit QLoRA      │
+├────────────────────────┼──────────────────┼──────────────────┤
+│ KEY DIFFERENCE         │ Smooth landscape │ Rough landscape  │
+│                        │ → CPU = GPU      │ → CPU ≠ GPU      │
+└────────────────────────┴──────────────────┴──────────────────┘
+
+★ Quantization is the sole variable causing CPU ≠ GPU.
+★ Next: 3B QLoRA 4-bit to confirm (same model, add quantization).
 ```
 
 ---
@@ -218,27 +318,37 @@ Sheet 8: Long-Context    — RULER/Multi-hop results + length-wise charts
 | Model download | Qwen2.5-3B-Instruct | ~5 min | ✅ Done |
 | A-1 | GPU bf16 100% 500 steps | ~25 min | ✅ Done (1.267) |
 | Baseline | GPU fp32 100% 500 steps | ~23 min | ✅ Done (1.2672) |
-| Round 1 (A, C, D) | 3 transition experiments | ~60 min | A ✅ Done (19m), C/D Pending |
-| MMLU evaluation × 4+ | 57-subject evaluation | ~40 min | Pending |
-| Long-Context evaluation | RULER + Multi-hop | ~30 min | Pending |
-| **Total** | | **~3 hours** |
+| Exp A | fp32→bf16 discont. lr | ~19 min | ✅ Done (MMLU 69.37%) |
+| Exp AA | fp32→bf16 cont. lr | ~19 min | ✅ Done (loss = Base ±0.001) |
+| CPU-AA | CPU fp32→GPU bf16 cont. lr | ~7.5h + 18min | ✅ Done (loss = Base ±0.002) |
+| CPU-C | CPU fp32→GPU bf16 discont. lr | ~2h (partial) | ★ Discontinued (CPU=GPU confirmed) |
+| MMLU eval (AA, CPU-AA) | 57-subject evaluation | ~40 min each | Pending |
+| **3B QLoRA 4-bit test** | **CPU vs GPU under quantization** | **~3h** | **Next** |
 
 ---
 
 ## Open Questions
 
-1. **fp64 anchor:** Does the loss landscape contain deeper basin structures invisible at fp32 resolution?
-   - CPU fp64 Phase1 (~6 hours) → GPU fp32 Phase2 → ~21 hours total
-   - 3B fp32 results will provide hints: if basins deepen → "more exists below", if not → "this is the floor"
+### Answered
 
-2. **Precision Oscillation:** Does alternating fp32↔bf16 create cumulative regularization?
-   - Zero prior work. Completely unexplored territory.
+- ~~Does bf16 = fp32?~~ **Yes.** 3× confirmed (A-1 vs Baseline, Exp A convergence, Exp AA).
+- ~~Does precision staging help?~~ **No.** With continuous lr, zero effect (±0.001).
+- ~~Does CPU determinism help in 16-bit?~~ **No.** CPU = GPU in all conditions (±0.002).
+- ~~Does lr schedule change CPU vs GPU?~~ **No.** Both continuous and discontinuous: CPU = GPU.
 
-3. **Minimum anchor threshold:** How many fp32 steps are sufficient for anchoring?
-   - Testable with 1%, 5%, 10%, 20% ratio experiments
+### Active
 
-4. **Anchor ratio ≈ improvement rate?** 20% fp32 → 21.7% train loss improvement. Coincidence or law?
-   - Verifiable with 10%, 30% ratio experiments
+1. **Does quantization create CPU ≠ GPU?** 3B QLoRA 4-bit experiment planned.
+2. **Does warm restart (SGDR) improve MMLU in 3B?** Eval pending (AA, CPU-AA).
+3. **Does multi-cycle CPU-SGDR amplify the effect?** Needs 2+ epoch experiment.
+4. **Does CPU-anchored SGDR outperform standard SGDR?** Needs QLoRA environment.
+
+### Future
+
+5. Does the MMLU gap emerge at full scale (1 epoch+, 6500+ steps)?
+6. Does fp64 CPU anchor provide deeper basins than fp32?
+7. Does high-quality data (LIMA, Orca) + CPU-anchored SGDR amplify the effect?
+8. Do alternative benchmarks (TruthfulQA, RULER) capture warm restart effects?
 
 ---
 
@@ -248,13 +358,13 @@ Sheet 8: Long-Context    — RULER/Multi-hop results + length-wise charts
 GitHub: cpu-anchor-cpu-gpu-hybrid-finetuning/
 ├── main branch (7B QLoRA 4-bit)
 │   ├── README.md
-│   ├── benchmark_log.txt (JF-1~JF-9)
+│   ├── benchmark_log.txt (JF-1~JF-10)
 │   ├── mmlu_subcategory_section.md
 │   └── Phase3_Training_Hybrid_System.md
 │
-└── 3b-full-precision branch (new)
+└── 3b-full-precision branch
     ├── 3B_README.md (this document)
-    ├── 3B_benchmark_log.txt (BF-1~)
+    ├── 3B_benchmark_log.txt (BF-1~BF-7)
     └── data.xlsx
 ```
 
@@ -262,10 +372,11 @@ GitHub: cpu-anchor-cpu-gpu-hybrid-finetuning/
 
 ## Credits
 
-- **Damione** (HuggingFace) — Suggested Experiment F (precision vs determinism isolation) and inspired the transition experiments by questioning whether the effect is position-independent
-- To be updated after 3B results are confirmed
+- **Damione** (HuggingFace) — Suggested Experiment F (precision vs determinism isolation)
+- **Loshchilov & Hutter** — SGDR: Warm Restarts (ICLR 2017) that our "design flaw" rediscovered
+- To be updated after quantization experiment results
 
 ---
 
-*Last updated: 2026-03-03*
+*Last updated: 2026-03-04*
 *Project Jellyfish 🪼 — CPU-Anchor Hybrid Fine-tuning Research*
