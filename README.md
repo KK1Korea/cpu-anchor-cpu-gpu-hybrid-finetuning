@@ -3,6 +3,9 @@
 [![HuggingFace](https://img.shields.io/badge/🤗-LoRA%20Adapters-yellow?style=flat-square)](https://huggingface.co/KK1kk1/jellyfish-cpu-anchor-lora)
 # 🪼 Jellyfish: CPU-Anchor Hybrid Training
 
+> **📋 Phase 2 in progress → See [`VERIFICATION_README.md`](VERIFICATION_README.md)**
+> Multi-seed SGDR & CPU Anchor verification. Q1–Q4 criteria, Gate system, per-group data in [`Test_Group/`](Test_Group/).
+
 > **⚠️ ERRATA & EXPERIMENT STATUS (2026-03-04) — PLEASE READ FIRST**
 >
 > **This experiment has concluded. CPU determinism hypothesis disproved.**
