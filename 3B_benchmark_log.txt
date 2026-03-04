@@ -7,7 +7,829 @@ Project Jellyfish 🪼
   See 3B_README.md for hypothesis and design details.
   See benchmark_log.txt (main branch) for 7B QLoRA 4-bit results (JF series).
 
+  ■ Branch: 3b-full-precision================================================================================
+Project Jellyfish 🪼
+3B Full-Precision Benchmark Log (BF series)
+================================================================================
+
+  This document records the actual benchmark execution results for 3B experiments.
+  See 3B_README.md for hypothesis and design details.
+  See benchmark_log.txt (main branch) for 7B QLoRA 4-bit results (JF series).
+
   ■ Branch: 3b-full-precision
+  ■ Purpose: Validate CPU-Anchor effect without quantization bottleneck
+  ■ Naming: BF-1, BF-2, ... (Branch Full-precision series)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BF-1] Experiment Environment + 3B Configuration — 2026-03-03
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ■ Hardware (unchanged from JF-1):
+    ┌────────┬──────────────────────────────────────────────────┐
+    │ OS     │ Windows 11 Pro 64-bit (26100.7840)               │
+    │ CPU    │ Intel Core Ultra 9 275HX (2700MHz base)          │
+    │ RAM    │ 64GB (32GB ×2, SK Hynix DDR5-5600)              │
+    │ dGPU   │ NVIDIA GeForce RTX 5090 Laptop GPU (GB203, sm_120, VRAM 24GB) │
+    │ iGPU   │ Intel Graphics                                   │
+    │ Display│ 2560 × 1600, 240Hz                               │
+    │ NVIDIA │ Driver 32.0.15.7703 (2025-07-28)                 │
+    └────────┴──────────────────────────────────────────────────┘
+
+  ■ Software (unchanged from JF-1):
+    - Python: 3.14 (system) → LLaMA-Factory venv (C:\LlamaFactory\venv)
+    - PyTorch: 2.12.0.dev20260228+cu128 (nightly, sm_120 compatible)
+    - LLaMA-Factory: v0.9.4 (git clone --depth 1, pip install -e .)
+    - bitsandbytes: 0.49.2 (Windows + CUDA official support)
+    - HuggingFace Hub: logged in (token: llama-factory, READ permission)
+
+  ■ Model:
+    - Qwen/Qwen2.5-3B-Instruct
+    - Downloaded: C:\Users\alkml\.cache\huggingface\hub\models--Qwen--Qwen2.5-3B-Instruct
+    - Selection reason: smaller model → more MMLU headroom (~15%+ gap from ceiling),
+      16-bit full loading fits in 24GB VRAM, removes QLoRA 4-bit quantization bottleneck
+    - 7B experiments showed C vs G MMLU gap (0.32%) was masked by 4-bit quantization
+      → 3B 16-bit tests whether gap widens without bottleneck
+
+  ■ Dataset:
+    - yahma/alpaca-cleaned (52k instruction-following)
+    - Same as 7B experiments for cross-comparison validity
+
+  ■ Training Method:
+    - LoRA with 16-bit full-precision model loading (NO quantization)
+    - 7B used QLoRA 4-bit → 3B removes this entirely
+    - Model weights: 3B × 2 bytes ≈ 6GB
+    - Optimizer state (fp32): ≈ 12GB
+    - Gradient + activation: ≈ 4GB
+    - Total estimated: ~22GB / 24GB VRAM
+
+  ■ Key Differences from 7B (JF series):
+    ┌──────────────────┬──────────────────────┬──────────────────────┐
+    │                  │ 7B (JF series)       │ 3B (BF series)       │
+    ├──────────────────┼──────────────────────┼──────────────────────┤
+    │ Model            │ Qwen2.5-7B-Instruct  │ Qwen2.5-3B-Instruct  │
+    │ Loading          │ 4-bit QLoRA          │ 16-bit full          │
+    │ Quantization     │ bitsandbytes 4-bit   │ None                 │
+    │ VRAM usage       │ ~10-13GB             │ ~22GB                │
+    │ batch × accum    │ 2×4=8                │ 1×8=8                │
+    │ learning_rate    │ 1.0e-4               │ 2.0e-5               │
+    │ seed             │ 42                   │ 5108                 │
+    │ MMLU headroom    │ ~1.5% (near ceiling) │ ~15%+ (large)        │
+    │ Quantization σ   │ ≈ 0.03               │ ≈ 0 (removed)        │
+    └──────────────────┴──────────────────────┴──────────────────────┘
+
+    Unchanged: lora_rank (8), lora_alpha (16), lora_dropout (0.05),
+    lr_scheduler (cosine), warmup_steps (30), max_steps (500),
+    cutoff_len (512), dataset (alpaca_en)
+
+  ■ Seed Change Rationale:
+    - 7B: seed 42 (single-seed limitation noted in all JF conclusions)
+    - 3B: seed 5108 (cross-seed verification)
+    - If 3B reproduces anchor effect with different seed → seed-independent confirmation
+    - All 3B experiments (Baseline, A, C, D) use seed 5108 for internal consistency
+
+  ■ Experiment Plan (from 3B_README.md):
+
+    Round 0 — Baseline:
+      Baseline: GPU fp32 500 steps 100% (ceiling reference)
+
+    Round 1 — Precision Transition:
+      A: fp32→bf16 (20:80)           — Reproduce F from 7B (downward transition)
+      C: bf16→fp32 (20:80)           — Reverse transition (upward)
+      D: fp32→bf16→fp32 (20:40:40)   — Double transition (recovery test)
+
+    Round 2 — Long-Context Benchmark:
+      RULER NIAH variant (4K/8K/16K/32K)
+      Multi-hop QA (8K/16K)
+
+  ■ Evaluation Plan:
+    Axis 1: Train Loss     — Optimization efficiency
+    Axis 2: MMLU 5-shot    — Knowledge/comprehension (identical to 7B eval conditions)
+    Axis 3: Long-Context   — Context maintenance capability (new)
+
+  ■ Experiment Plan (Updated):
+
+    Round 0 — Pure Precision Baselines:
+      A-1:      GPU bf16 500 steps 100% (floor reference)
+      Baseline: GPU fp32 500 steps 100% (ceiling reference)
+
+    Round 1 — Precision Transition:
+      A: fp32→bf16 (20:80)           — Reproduce F from 7B (downward transition)
+      C: bf16→fp32 (20:80)           — Reverse transition (upward)
+      D: fp32→bf16→fp32 (20:40:40)   — Double transition (recovery test)
+
+    Round 2 — Long-Context Benchmark:
+      RULER NIAH variant (4K/8K/16K/32K)
+      Multi-hop QA (8K/16K)
+
+  ■ File Locations:
+    YAML configs:       C:\LlamaFactory\
+    Execution scripts:  C:\Users\alkml\OneDrive\Desktop\Game\테스트\
+    Model saves:        C:\LlamaFactory\saves\
+    Evaluation results: C:\LlamaFactory\saves\ (per experiment)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BF-2] A-1: GPU bf16 100% (Floor Reference) — 2026-03-03
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  train_loss = 1.267 | runtime = 24m 42s | sub-1.0 = Yes (0.9967, step 380)
+  → Step-by-step data: data.xlsx "Train Loss" sheet, A-1 column
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BF-3] Baseline: GPU fp32 100% (Ceiling Reference) — 2026-03-03
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  train_loss = 1.2672 | runtime = 23m 22s | sub-1.0 = Yes (0.9978, step 380)
+  → Step-by-step data: data.xlsx "Train Loss" sheet, Baseline column
+
+  ■ A-1 vs Baseline Comparison:
+    ┌──────────────────────┬───────────┬────────────┐
+    │                      │ A-1(bf16) │ Base(fp32) │
+    ├──────────────────────┼───────────┼────────────┤
+    │ train_loss           │     1.267 │     1.2672 │
+    │ Δ                    │         +0.0002        │
+    │ Max per-step diff    │         ≤0.002         │
+    │ sub-1.0 step         │  380(0.997) │ 380(0.998) │
+    └──────────────────────┴───────────┴────────────┘
+
+  ■ FINDING — bf16 = fp32 CONFIRMED:
+    - 500 steps, every step within ±0.002. Identical trajectory.
+    - 7B's 22% improvement (Exp F: fp32→bf16) was NOT from fp32 superiority.
+      The improvement came from "precision transition" — the ACT of switching.
+    - sub-1.0 achieved without anchor → 7B's sub-1.0 barrier was QLoRA bottleneck.
+    - This is the first known bf16 vs fp32 full-training comparison with
+      identical seed on the same LLM (no quantization, pure bf16 vs pure fp32).
+
+  ■ Baseline MMLU Results:
+    Overall = 69.30% (±0.0046)
+    ┌───────────────────┬──────────────────┐
+    │ humanities        │ 69.88% (±0.0091) │
+    │ social_sciences   │ 78.35% (±0.0090) │
+    │ other             │ 69.51% (±0.0096) │
+    │ stem              │ 61.91% (±0.0090) │
+    └───────────────────┴──────────────────┘
+    → Full 57-subject data: data.xlsx "MMLU Raw" sheet
+
+  ■ 3B vs 7B Headroom:
+    7B baseline MMLU: 76.25% → ceiling ~77%, headroom ~1.5%
+    3B baseline MMLU: 69.30% → ceiling ~77%, headroom ~7%+
+    → 3B has 5x more room for transition effect to show in MMLU
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BF-4] Exp A: GPU fp32 → GPU bf16 (20:80) — 2026-03-03
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  train_loss = 0.9801 (ARTIFACT — see below) | runtime = 19m 07s | sub-1.0 = Yes (0.9995, step 380)
+  → Corrected Phase2 avg: 0.9801 × (500/400) = 1.2251 ≈ Baseline 1.22
+  → Step-by-step data: data.xlsx "Train Loss" sheet, A column
+
+  ■ Exp A vs Baseline vs A-1 Comparison:
+    ┌──────────────────────┬───────────┬────────────┬────────────┐
+    │                      │ A-1(bf16) │ Base(fp32) │ A(fp32→bf16)│
+    ├──────────────────────┼───────────┼────────────┼────────────┤
+    │ train_loss (reported)│     1.267 │     1.2672 │     0.9801 │
+    │ train_loss (actual) │     1.267 │     1.2672 │    ~1.2251*│
+    │ * Phase2 corrected: 0.9801 × (500/400). HF Trainer resume artifact. │
+    │ vs Baseline          │   +0.0002 │   baseline │  artifact  │
+    │ sub-1.0 step         │ 380(0.997)│ 380(0.998) │ 380(0.9995)│
+    │ runtime              │  24m 42s  │  23m 22s   │  19m 07s   │
+    └──────────────────────┴───────────┴────────────┴────────────┘
+
+  ■ Phase 1 (GPU fp32, 100 steps):
+    step  10: loss 1.814  lr 6.000e-06
+    step  20: loss 1.813  lr 1.267e-05
+    step  30: loss 1.845  lr 1.933e-05
+    step  40: loss 1.558  lr 1.920e-05
+    step  50: loss 1.488  lr 1.658e-05
+    step  60: loss 1.400  lr 1.266e-05
+    step  70: loss 1.277  lr 8.214e-06
+    step  80: loss 1.155  lr 4.122e-06
+    step  90: loss 1.182  lr 1.194e-06
+    step 100: loss 1.176  lr 1.007e-08  ← lr completed to ~0
+
+  ■ Phase 1 → Phase 2 Transition:
+    Phase1 final (step 100): loss 1.176 (lr ≈ 0)
+    Phase2 first  (step 110): loss 1.330 (lr = 1.864e-05)
+    Transition shock: +0.154
+
+    7B transition shock was +0.017. 3B shock is 9x larger.
+    Cause: Phase1 cosine completes in 100 steps → lr drops to ~0.
+    Phase2 resumes 500-step cosine at step 100 position → lr jumps to 1.864e-05.
+    The shock is lr discontinuity, not precision transition.
+
+  ■ Phase 2 (GPU bf16, 400 steps):
+    step 110: loss 1.330  lr 1.864e-05
+    step 120: loss 1.339  lr 1.828e-05
+    step 130: loss 1.211  lr 1.789e-05
+    step 140: loss 1.260  lr 1.746e-05
+    step 150: loss 1.193  lr 1.700e-05
+    step 160: loss 1.214  lr 1.651e-05
+    step 170: loss 1.229  lr 1.599e-05
+    step 180: loss 1.239  lr 1.544e-05
+    step 190: loss 1.164  lr 1.486e-05
+    step 200: loss 1.124  lr 1.427e-05
+    step 210: loss 1.256  lr 1.366e-05
+    step 220: loss 1.324  lr 1.303e-05
+    step 230: loss 1.283  lr 1.238e-05
+    step 240: loss 1.305  lr 1.173e-05
+    step 250: loss 1.283  lr 1.107e-05
+    step 260: loss 1.226  lr 1.040e-05
+    step 270: loss 1.250  lr 9.733e-06
+    step 280: loss 1.114  lr 9.066e-06
+    step 290: loss 1.250  lr 8.403e-06
+    step 300: loss 1.338  lr 7.747e-06
+    step 310: loss 1.205  lr 7.101e-06
+    step 320: loss 1.217  lr 6.468e-06
+    step 330: loss 1.352  lr 5.851e-06
+    step 340: loss 1.150  lr 5.253e-06
+    step 350: loss 1.229  lr 4.676e-06
+    step 360: loss 1.223  lr 4.122e-06
+    step 370: loss 1.195  lr 3.595e-06
+    step 380: loss 0.9995 lr 3.096e-06  ← sub-1.0
+    step 390: loss 1.177  lr 2.628e-06
+    step 400: loss 1.231  lr 2.194e-06
+    step 410: loss 1.337  lr 1.794e-06
+    step 420: loss 1.105  lr 1.430e-06
+    step 430: loss 1.131  lr 1.105e-06
+    step 440: loss 1.274  lr 8.198e-07
+    step 450: loss 1.275  lr 5.754e-07
+    step 460: loss 1.232  lr 3.732e-07
+    step 470: loss 1.203  lr 2.139e-07
+    step 480: loss 1.116  lr 9.836e-08
+    step 490: loss 1.150  lr 2.702e-08
+    step 500: loss 1.272  lr 2.234e-10
+
+  ■ Step-by-Step Exp A vs Baseline Comparison (Phase2):
+
+    step 110: A 1.330  Base 1.294  Δ +0.036  ← shock residual
+    step 120: A 1.339  Base 1.310  Δ +0.029
+    step 130: A 1.211  Base 1.189  Δ +0.022
+    step 140: A 1.260  Base 1.243  Δ +0.017
+    step 150: A 1.193  Base 1.175  Δ +0.018
+    step 160: A 1.214  Base 1.200  Δ +0.014
+    step 170: A 1.229  Base 1.219  Δ +0.010
+    step 180: A 1.239  Base 1.231  Δ +0.008
+    step 190: A 1.164  Base 1.156  Δ +0.008
+    step 200: A 1.124  Base 1.117  Δ +0.007
+    step 250: A 1.283  Base 1.281  Δ +0.002
+    step 300: A 1.338  Base 1.335  Δ +0.003
+    step 350: A 1.229  Base 1.226  Δ +0.003
+    step 400: A 1.231  Base 1.228  Δ +0.003
+    step 450: A 1.275  Base 1.273  Δ +0.002
+    step 500: A 1.272  Base 1.271  Δ +0.001
+
+    Exp A NEVER dropped below Baseline in Phase2.
+    Gap narrowed from +0.036 to +0.001 but remained positive throughout.
+
+  ■ CRITICAL FINDING — train_loss -22.7% Is a Measurement Artifact:
+
+    The -22.7% comes from how PyTorch trainer computes train_loss (average of ALL steps).
+
+    Phase1 cosine completes in 100 steps:
+      → lr drops to ~0 by step 70-100
+      → loss at steps 70-100: 1.155~1.182 (low, but model stopped learning)
+      → These artificially low Phase1 values pull the overall average down
+
+    Baseline cosine spans 500 steps:
+      → lr at steps 70-100 still 1.947~1.966e-05 (active learning)
+      → loss at steps 70-100: 1.137~1.264 (similar range, but lr still high)
+      → No artificially low "stalled" steps
+
+    Step-by-step Phase2 truth: Exp A is consistently ABOVE Baseline (+0.001~+0.036).
+    The transition PROVIDED NO BENEFIT — it caused shock and permanent (tiny) deficit.
+
+    7B's -22.5% must be re-examined:
+      → 7B Phase1 also used 100-step cosine → same averaging artifact
+      → BUT 7B had QLoRA 4-bit → precision×quantization interaction may have
+        created REAL Phase2 improvement that 3B doesn't have
+      → 7B step-by-step data for Exp A (GPU-only) was not fully logged (JF-2),
+        making direct Phase2 comparison impossible
+
+  ■ FINDING — Transition Effect Without Quantization = No Real Improvement:
+
+    3B (16-bit full, no quantization):
+      bf16 = fp32 confirmed (BF-3)
+      fp32→bf16 transition = no Phase2 improvement, only shock damage
+      train_loss -22.7% is lr schedule artifact, not genuine improvement
+
+    7B (QLoRA 4-bit):
+      bf16 ≠ fp32 under quantization (inferred — not directly tested)
+      fp32→bf16 transition = -22.5% (artifact + possible real QLoRA interaction)
+      Needs 7B step-by-step A vs F Phase2 re-examination
+
+    Emerging hypothesis:
+      Precision-staged training benefit = f(quantization_level)
+      More quantization → more benefit from fp32 staging
+      No quantization → no benefit (possibly harmful due to lr shock)
+
+  ■ Awaiting: Exp A MMLU evaluation
+    MMLU may still show differences even if train_loss doesn't (as in 7B C vs G).
+
+  ■ Exp A MMLU Results:
+    Overall = 69.37% (±0.0046) vs Baseline 69.30% → +0.07%
+    ┌───────────────────┬──────────┬──────────┬─────────┐
+    │ Category          │ Baseline │  Exp A   │    Δ    │
+    ├───────────────────┼──────────┼──────────┼─────────┤
+    │ humanities        │  69.88%  │  69.74%  │  -0.14% │
+    │ social_sciences   │  78.35%  │  78.54%  │  +0.19% │
+    │ other             │  69.51%  │  69.56%  │  +0.05% │
+    │ stem              │  61.91%  │  62.06%  │  +0.15% │
+    │ Overall           │  69.30%  │  69.37%  │  +0.07% │
+    └───────────────────┴──────────┴──────────┴─────────┘
+    All differences within stderr (±0.46%). Statistically identical.
+    → Full 57-subject data: data.xlsx "MMLU Raw" sheet
+
+  ■ FINDING — Precision Staging Without Quantization = No MMLU Benefit:
+
+    3B (16-bit full, no quantization):
+      train_loss: artifact (reported -22.7%, actual +0.52% worse)
+      MMLU: +0.07% (noise, within stderr)
+      Conclusion: No benefit from precision staging in full-precision environment.
+
+    7B (QLoRA 4-bit):
+      train_loss: artifact (reported -21.7%, actual ~2% real improvement unconfirmed)
+      MMLU: +0.16% (F vs A) — also within stderr, but direction-consistent across F/C/G
+      Conclusion: Possible small benefit, but may require quantization environment.
+
+    Cross-comparison:
+      7B stderr: ±0.40%, 7B Δ: +0.16% (0.40x stderr)
+      3B stderr: ±0.46%, 3B Δ: +0.07% (0.15x stderr)
+      7B had 4 experiments all above baseline (direction-consistent)
+      3B has 1 experiment essentially at baseline
+
+    Emerging conclusion:
+      Precision-staged training benefit = f(quantization_level)
+      QLoRA 4-bit: possible small MMLU benefit (unconfirmed, within stderr)
+      16-bit full: no benefit (train_loss worse, MMLU noise)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BF-5] Exp AA: GPU fp32 → GPU bf16 — Continuous LR (Design Fix) — 2026-03-03
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  train_loss = 0.975 (ARTIFACT — same as BF-4)
+  Corrected Phase2 avg: 0.975 × (500/400) = 1.2188 ≈ Baseline 1.22
+  runtime = 19m 20s | sub-1.0 = Yes (0.9969, step 380)
+  → Step-by-step data: data.xlsx "Train Loss" sheet, AA column
+
+  ■ Design Fix — What Changed from Exp A:
+
+    Exp A (BF-4):  Phase1 max_steps=100, independent 100-step cosine
+                   → lr completed to ~0 by step 100
+                   → Phase2 resumed with new 500-step cosine → lr discontinuity
+
+    Exp AA (BF-5): Phase1 max_steps=500, save_steps=100, manually stopped after 100
+                   → lr followed 500-step cosine, saved scheduler state at step 100
+                   → Phase2 resumed same 500-step cosine → lr continuous
+
+    A  step 100 lr: 1.007e-08 (dead)  → Phase2 jump to 1.864e-05 (shock!)
+    AA step 100 lr: 1.896e-05 (alive) → Phase2 continues at 1.864e-05 (smooth)
+
+  ■ Phase1 (GPU fp32, steps 1-100, 500-step cosine):
+
+    step  10: loss 1.814  lr 6.000e-06    Baseline: 1.814  Δ  0.000
+    step  20: loss 1.813  lr 1.267e-05    Baseline: 1.813  Δ  0.000
+    step  30: loss 1.845  lr 1.933e-05    Baseline: 1.845  Δ  0.000
+    step  40: loss 1.558  lr 1.998e-05    Baseline: 1.558  Δ  0.000
+    step  50: loss 1.484  lr 1.992e-05    Baseline: 1.484  Δ  0.000
+    step  60: loss 1.395  lr 1.981e-05    Baseline: 1.395  Δ  0.000
+    step  70: loss 1.264  lr 1.966e-05    Baseline: 1.264  Δ  0.000
+    step  80: loss 1.137  lr 1.947e-05    Baseline: 1.137  Δ  0.000
+    step  90: loss 1.156  lr 1.923e-05    Baseline: 1.156  Δ  0.000
+    step 100: loss 1.141  lr 1.896e-05    Baseline: 1.141  Δ  0.000
+    → 10/10 identical to Baseline. Same 500-step cosine, same seed = same path.
+
+  ■ Phase2 (GPU bf16, steps 101-500, resumed 500-step cosine):
+
+    step 110: loss 1.293  lr 1.864e-05    Baseline: 1.294  Δ -0.001
+    step 120: loss 1.310  lr 1.828e-05    Baseline: 1.310  Δ  0.000
+    step 130: loss 1.189  lr 1.789e-05    Baseline: 1.189  Δ  0.000
+    step 140: loss 1.243  lr 1.746e-05    Baseline: 1.243  Δ  0.000
+    step 150: loss 1.175  lr 1.700e-05    Baseline: 1.175  Δ  0.000
+    step 160: loss 1.201  lr 1.651e-05    Baseline: 1.200  Δ +0.001
+    step 170: loss 1.219  lr 1.599e-05    Baseline: 1.219  Δ  0.000
+    step 180: loss 1.230  lr 1.544e-05    Baseline: 1.231  Δ -0.001
+    step 190: loss 1.157  lr 1.486e-05    Baseline: 1.156  Δ +0.001
+    step 200: loss 1.118  lr 1.427e-05    Baseline: 1.117  Δ +0.001
+    step 210: loss 1.252  lr 1.366e-05    Baseline: 1.251  Δ +0.001
+    step 220: loss 1.321  lr 1.303e-05    Baseline: 1.320  Δ +0.001
+    step 230: loss 1.279  lr 1.238e-05    Baseline: 1.279  Δ  0.000
+    step 240: loss 1.302  lr 1.173e-05    Baseline: 1.302  Δ  0.000
+    step 250: loss 1.281  lr 1.107e-05    Baseline: 1.281  Δ  0.000
+    step 260: loss 1.222  lr 1.040e-05    Baseline: 1.223  Δ -0.001
+    step 270: loss 1.246  lr 9.733e-06    Baseline: 1.246  Δ  0.000
+    step 280: loss 1.111  lr 9.066e-06    Baseline: 1.110  Δ +0.001
+    step 290: loss 1.246  lr 8.403e-06    Baseline: 1.246  Δ  0.000
+    step 300: loss 1.334  lr 7.747e-06    Baseline: 1.335  Δ -0.001
+    step 310: loss 1.203  lr 7.101e-06    Baseline: 1.203  Δ  0.000
+    step 320: loss 1.215  lr 6.468e-06    Baseline: 1.216  Δ -0.001
+    step 330: loss 1.349  lr 5.851e-06    Baseline: 1.347  Δ +0.002
+    step 340: loss 1.146  lr 5.253e-06    Baseline: 1.147  Δ -0.001
+    step 350: loss 1.226  lr 4.676e-06    Baseline: 1.226  Δ  0.000
+    step 360: loss 1.220  lr 4.122e-06    Baseline: 1.221  Δ -0.001
+    step 370: loss 1.194  lr 3.595e-06    Baseline: 1.195  Δ -0.001
+    step 380: loss 0.997  lr 3.096e-06    Baseline: 0.998  Δ -0.001
+    step 390: loss 1.174  lr 2.628e-06    Baseline: 1.174  Δ  0.000
+    step 400: loss 1.228  lr 2.194e-06    Baseline: 1.228  Δ  0.000
+    step 410: loss 1.334  lr 1.794e-06    Baseline: 1.334  Δ  0.000
+    step 420: loss 1.101  lr 1.430e-06    Baseline: 1.101  Δ  0.000
+    step 430: loss 1.129  lr 1.105e-06    Baseline: 1.129  Δ  0.000
+    step 440: loss 1.271  lr 8.198e-07    Baseline: 1.271  Δ  0.000
+    step 450: loss 1.273  lr 5.754e-07    Baseline: 1.273  Δ  0.000
+    step 460: loss 1.230  lr 3.732e-07    Baseline: 1.230  Δ  0.000
+    step 470: loss 1.201  lr 2.139e-07    Baseline: 1.201  Δ  0.000
+    step 480: loss 1.113  lr 9.836e-08    Baseline: 1.113  Δ  0.000
+    step 490: loss 1.149  lr 2.702e-08    Baseline: 1.148  Δ +0.001
+    step 500: loss 1.269  lr 2.234e-10    Baseline: 1.271  Δ -0.002
+
+    Max Δ: ±0.002 across all 40 Phase2 steps.
+    Transition shock: 0 (step 110 Δ = -0.001, vs Exp A's +0.036)
+
+  ■ FINDING — Precision Transition with Continuous LR = Zero Effect:
+
+    Exp A  (lr discontinuity): Phase2 avg +0.52% above Baseline (shock damage)
+    Exp AA (lr continuous):    Phase2 avg ±0.001 = identical to Baseline
+
+    Precision switch (fp32 → bf16) at step 100 with continuous lr schedule
+    produces ZERO measurable effect on training loss. This is the 3rd independent
+    confirmation of bf16 = fp32:
+      1st: A-1 vs Baseline (full 500-step, Δ ≤ 0.002)
+      2nd: Exp A Phase2 convergence (step 300+, Δ ≤ 0.003)
+      3rd: Exp AA continuous lr (all steps, Δ ≤ 0.002) ★ cleanest proof
+
+    Exp A's transition shock (+0.154) and Phase2 deficit (+0.52%) were caused
+    entirely by lr schedule discontinuity, not by precision transition.
+
+  ■ Awaiting: Exp AA MMLU evaluation
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BF-6] Exp CPU-AA: CPU fp32 → GPU bf16 — Continuous LR (Determinism Test) — 2026-03-04
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  train_loss = 0.9749 (ARTIFACT — same as BF-4/BF-5)
+  Corrected Phase2 avg: 0.9749 × (500/400) = 1.2186 ≈ Baseline 1.22
+  Phase1 runtime = ~7h 22m (CPU, crashed at step 282, checkpoint-200 saved)
+  Phase2 runtime = 18m 11s (GPU bf16, resumed from checkpoint-100)
+  → Step-by-step data: data.xlsx "Train Loss" sheet, CPU-AA column
+
+  ■ Design — What This Experiment Tests:
+
+    This is the FIRST correctly-designed CPU determinism experiment.
+    Unlike 7B Exp C/G which had lr discontinuity (confounding variable),
+    CPU-AA uses continuous 500-step cosine schedule throughout.
+
+    Phase1: CPU fp32, max_steps=500, save_steps=100 → checkpoint-100 saved
+    Phase2: GPU bf16, max_steps=500, resume from checkpoint-100 → continuous lr
+
+    Comparison: CPU-AA vs AA (BF-5) = pure CPU determinism effect
+    (Both use identical continuous lr, only Phase1 device differs)
+
+  ■ Phase1 (CPU fp32, steps 1-100, 500-step cosine):
+
+    step  10: loss 1.815  lr 6.000e-06    Baseline: 1.814  Δ +0.001
+    step  20: loss 1.815  lr 1.267e-05    Baseline: 1.813  Δ +0.002
+    step  30: loss 1.845  lr 1.933e-05    Baseline: 1.845  Δ  0.000
+    step  40: loss 1.556  lr 1.998e-05    Baseline: 1.558  Δ -0.002
+    → Step 50-100 not logged (10-step interval, CPU training continued beyond
+      step 100 until crash at step 282)
+    → CPU Phase1 full training (steps 101-282) showed Δ ≤ 0.001 vs Baseline
+      throughout — CPU fp32 = GPU fp32 in 3B 16-bit full.
+
+  ■ CPU Phase1 Extended (steps 110-280, still CPU fp32):
+
+    step 110: loss 1.294  Baseline: 1.294  Δ  0.000
+    step 120: loss 1.310  Baseline: 1.310  Δ  0.000
+    step 130: loss 1.190  Baseline: 1.189  Δ +0.001
+    step 140: loss 1.243  Baseline: 1.243  Δ  0.000
+    step 150: loss 1.174  Baseline: 1.175  Δ -0.001
+    step 160: loss 1.201  Baseline: 1.200  Δ +0.001
+    step 170: loss 1.219  Baseline: 1.219  Δ  0.000
+    step 180: loss 1.229  Baseline: 1.231  Δ -0.002
+    step 190: loss 1.156  Baseline: 1.156  Δ  0.000
+    step 200: loss 1.117  Baseline: 1.117  Δ  0.000
+    step 210: loss 1.252  Baseline: 1.251  Δ +0.001
+    step 220: loss 1.320  Baseline: 1.320  Δ  0.000
+    step 230: loss 1.280  Baseline: 1.279  Δ +0.001
+    step 240: loss 1.302  Baseline: 1.302  Δ  0.000
+    step 250: loss 1.281  Baseline: 1.281  Δ  0.000
+    step 260: loss 1.223  Baseline: 1.223  Δ  0.000
+    step 270: loss 1.246  Baseline: 1.246  Δ  0.000
+    step 280: loss 1.110  Baseline: 1.110  Δ  0.000
+    → Max Δ: ±0.002 across 18 steps. CPU fp32 = GPU fp32 confirmed.
+
+  ■ Phase2 (GPU bf16, steps 101-500, resumed from CPU checkpoint-100):
+
+    step 110: loss 1.292  AA: 1.293  Baseline: 1.294  Δ(vs Base) -0.002
+    step 120: loss 1.309  AA: 1.310  Baseline: 1.310  Δ -0.001
+    step 130: loss 1.189  AA: 1.189  Baseline: 1.189  Δ  0.000
+    step 140: loss 1.244  AA: 1.243  Baseline: 1.243  Δ +0.001
+    step 150: loss 1.175  AA: 1.175  Baseline: 1.175  Δ  0.000
+    step 160: loss 1.200  AA: 1.201  Baseline: 1.200  Δ  0.000
+    step 170: loss 1.219  AA: 1.219  Baseline: 1.219  Δ  0.000
+    step 180: loss 1.228  AA: 1.230  Baseline: 1.231  Δ -0.003
+    step 190: loss 1.156  AA: 1.157  Baseline: 1.156  Δ  0.000
+    step 200: loss 1.117  AA: 1.118  Baseline: 1.117  Δ  0.000
+    step 210: loss 1.252  AA: 1.252  Baseline: 1.251  Δ +0.001
+    step 220: loss 1.320  AA: 1.321  Baseline: 1.320  Δ  0.000
+    step 230: loss 1.280  AA: 1.279  Baseline: 1.279  Δ +0.001
+    step 240: loss 1.302  AA: 1.302  Baseline: 1.302  Δ  0.000
+    step 250: loss 1.282  AA: 1.281  Baseline: 1.281  Δ +0.001
+    step 260: loss 1.223  AA: 1.222  Baseline: 1.223  Δ  0.000
+    step 270: loss 1.246  AA: 1.246  Baseline: 1.246  Δ  0.000
+    step 280: loss 1.109  AA: 1.111  Baseline: 1.110  Δ -0.001
+    step 290: loss 1.246  AA: 1.246  Baseline: 1.246  Δ  0.000
+    step 300: loss 1.335  AA: 1.334  Baseline: 1.335  Δ  0.000
+    step 310: loss 1.201  AA: 1.203  Baseline: 1.203  Δ -0.002
+    step 320: loss 1.216  AA: 1.215  Baseline: 1.216  Δ  0.000
+    step 330: loss 1.348  AA: 1.349  Baseline: 1.347  Δ +0.001
+    step 340: loss 1.146  AA: 1.146  Baseline: 1.147  Δ -0.001
+    step 350: loss 1.227  AA: 1.226  Baseline: 1.226  Δ +0.001
+    step 360: loss 1.220  AA: 1.220  Baseline: 1.221  Δ -0.001
+    step 370: loss 1.194  AA: 1.194  Baseline: 1.195  Δ -0.001
+    step 380: loss 0.998  AA: 0.997  Baseline: 0.998  Δ  0.000
+    step 390: loss 1.174  AA: 1.174  Baseline: 1.174  Δ  0.000
+    step 400: loss 1.229  AA: 1.228  Baseline: 1.228  Δ +0.001
+    step 410: loss 1.333  AA: 1.334  Baseline: 1.334  Δ -0.001
+    step 420: loss 1.101  AA: 1.101  Baseline: 1.101  Δ  0.000
+    step 430: loss 1.129  AA: 1.129  Baseline: 1.129  Δ  0.000
+    step 440: loss 1.271  AA: 1.271  Baseline: 1.271  Δ  0.000
+    step 450: loss 1.272  AA: 1.273  Baseline: 1.273  Δ -0.001
+    step 460: loss 1.229  AA: 1.230  Baseline: 1.230  Δ -0.001
+    step 470: loss 1.200  AA: 1.201  Baseline: 1.201  Δ -0.001
+    step 480: loss 1.114  AA: 1.113  Baseline: 1.113  Δ +0.001
+    step 490: loss 1.149  AA: 1.149  Baseline: 1.148  Δ +0.001
+    step 500: loss 1.269  AA: 1.269  Baseline: 1.271  Δ -0.002
+
+    Max Δ: ±0.003 across all 40 Phase2 steps.
+    CPU-AA = AA = Baseline throughout.
+
+  ■ FINDING — CPU Determinism Has Zero Effect in 3B 16-bit Full:
+
+    In 16-bit full-precision training (no quantization), CPU fp32 and GPU fp32
+    produce identical training trajectories. CPU determinism provides no measurable
+    benefit when the loss landscape is smooth (no quantization noise).
+
+    Comparison with 7B QLoRA 4-bit results:
+      7B Phase1: CPU fp32 ≠ GPU fp32 (Δ = 0.82%, step 40-100 consistent)
+      3B Phase1: CPU fp32 = GPU fp32 (Δ ≤ 0.002, noise level)
+
+    This suggests CPU determinism effects depend on:
+      (a) Quantization noise (4-bit makes landscape rough → determinism matters), OR
+      (b) lr discontinuity (7B had flawed lr, 3B had continuous lr), OR
+      (c) Both factors combined
+
+    To disambiguate: Need 7B QLoRA + continuous lr + CPU experiment.
+
+  ■ Awaiting: Exp CPU-AA MMLU evaluation (expected ≈ Baseline 69.30%)
+
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BF-7] Exp CPU-C: CPU fp32 → GPU bf16 — Discontinuous LR (SGDR Test) — 2026-03-04
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ★ DISCONTINUED at Phase1 step 70/100 — Phase2 not executed.
+  Reason: Phase1 CPU fp32 = GPU fp32 (Δ ≤ 0.002) identical to Exp A.
+  Same anchor → same Phase2 → same MMLU. No scientific value in continuing.
+  Decision: Proceed to 3B QLoRA 4-bit experiments to test quantization hypothesis.
+
+  ■ Design — What This Experiment Tests:
+
+    CPU-C completes the 3B 2×2 matrix (continuous/discontinuous × CPU/GPU):
+
+    ┌──────────────────┬──────────────┬──────────────────────┐
+    │                  │ Continuous lr │ Discontinuous lr     │
+    ├──────────────────┼──────────────┼──────────────────────┤
+    │ GPU fp32 anchor  │ AA = Base ✅  │ A = +0.52% ✅        │
+    │ CPU fp32 anchor  │ CPU-AA = Base ✅│ CPU-C = ??? (this) │
+    └──────────────────┴──────────────┴──────────────────────┘
+
+    Phase1: CPU fp32, max_steps=100, independent 100-step cosine (= SGDR restart setup)
+    Phase2: GPU bf16, max_steps=500, resume from checkpoint-100, new 500-step cosine
+
+    Comparison: CPU-C vs Exp A (BF-4) = pure CPU determinism effect under warm restart
+
+  ■ Phase1 (CPU fp32, 100-step cosine, discontinued at step 70):
+
+    step  10: loss 1.815  lr 6.000e-06    Exp A: 1.814  Δ +0.001
+    step  20: loss 1.815  lr 1.267e-05    Exp A: 1.813  Δ +0.002
+    step  30: loss 1.845  lr 1.933e-05    Exp A: 1.845  Δ  0.000
+    step  40: loss 1.557  lr 1.920e-05    Exp A: 1.558  Δ -0.001
+    step  50: loss 1.487  lr 1.658e-05    Exp A: 1.488  Δ -0.001
+    step  60: loss 1.400  lr 1.266e-05    Exp A: 1.400  Δ  0.000
+    step  70: loss 1.277  lr 8.214e-06    Exp A: 1.277  Δ  0.000
+
+    Max Δ: ±0.002 (step 20). Average Δ: ±0.0007.
+    CPU fp32 = GPU fp32 at every logged step, identical to CPU-AA finding.
+
+  ■ FINDING — CPU = GPU in 3B 16-bit Full, REGARDLESS of LR Schedule:
+
+    ┌─────────────────────────────┬──────────────┬─────────────────────────┐
+    │ Experiment                  │ lr Schedule  │ CPU vs GPU Phase1 Δ     │
+    ├─────────────────────────────┼──────────────┼─────────────────────────┤
+    │ CPU-AA (BF-6, continuous)   │ 500-step cos │ ≤ 0.002 (all steps)    │
+    │ CPU-C  (BF-7, discontinuous)│ 100-step cos │ ≤ 0.002 (step 10-70)  │
+    └─────────────────────────────┴──────────────┴─────────────────────────┘
+
+    = lr schedule is NOT the variable. CPU = GPU always in 16-bit full.
+
+    Cross-reference with 7B QLoRA 4-bit:
+      7B Phase1 (QLoRA 4-bit): CPU fp32 ≠ GPU fp32 (Δ = 0.82%, step 40-100 consistent)
+      3B Phase1 (16-bit full): CPU fp32 = GPU fp32 (Δ ≤ 0.002, all schedules)
+
+    ★★★ ORIGINAL CONCLUSION (RETRACTED — see BF-8): ★★★
+    ★★★ "Quantization is the SOLE variable causing CPU ≠ GPU" — RETRACTED ★★★
+    ★★★ BF-8 showed CPU = GPU even with QLoRA 4-bit when batch is controlled. ★★★
+    ★★★ 7B "0.82%" was confounded with batch mismatch (2×4 vs 1×8). ★★★
+
+    In smooth landscape (16-bit full):
+      - Deterministic (CPU) and stochastic (GPU) computation produce identical results
+      - lr schedule (continuous or discontinuous) does not change this
+      - No experiment variant produced CPU ≠ GPU
+
+    In rough landscape (QLoRA 4-bit):
+      - Quantization noise creates micro-differences in gradient computation
+      - CPU (deterministic) accumulates these differences consistently in one direction
+      - GPU (non-deterministic) accumulates them randomly → different trajectory
+      - Result: 0.82% divergence over 60 steps (7B data)
+
+    Mechanism (hypothesis):
+      4-bit weight → dequantize to fp32 → compute gradient → re-quantize
+      The dequantization step introduces rounding noise.
+      CPU processes this noise deterministically → consistent path
+      GPU processes this noise non-deterministically → stochastic path
+      Without quantization (16-bit), there is no rounding noise → identical paths.
+
+  ■ Next Step: 3B QLoRA 4-bit CPU vs GPU Phase1 comparison
+    → If CPU ≠ GPU in 3B 4-bit: quantization confirmed 100%
+    → If CPU = GPU in 3B 4-bit: model size is the variable (unexpected)
+
+  ■ Awaiting: MMLU evaluation deferred (same anchor → same result expected)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BF-8] Exp Q-G: 3B QLoRA 4-bit CPU fp32 vs GPU fp32 — Batch-Controlled Test — 2026-03-04
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ★ CRITICAL RESULT: CPU = GPU even with QLoRA 4-bit (when batch is controlled).
+  ★ This RETRACTS the BF-7 conclusion: "Quantization is the sole variable."
+  ★ 7B "0.82% CPU deeper" was likely caused by batch mismatch, not quantization.
+  ★ EXPERIMENT SUSPENDED — too many confounding variables to continue.
+
+  ■ Purpose:
+
+    Test whether quantization (QLoRA 4-bit) causes CPU ≠ GPU on the 3B model.
+    This was intended as the "100% confirmation" experiment.
+
+    Expectation (from BF-7 conclusion):
+      3B 16-bit: CPU = GPU → ✅ confirmed
+      3B 4-bit:  CPU ≠ GPU → if yes, quantization = sole variable
+
+    Actual result: CPU = GPU in 4-bit too → quantization is NOT the variable.
+
+  ■ Key Design Decision — Batch Controlled:
+
+    In 7B experiments, there was an unnoticed batch confound:
+      7B Exp F (GPU fp32): batch 1×8 = 8 (VRAM limitation forced batch=1)
+      7B Exp C/G (CPU fp32): batch 2×4 = 8 (CPU has no VRAM limitation)
+
+    The "0.82% CPU deeper" finding compared F (GPU, 1×8) vs C/G (CPU, 2×4).
+    Two variables changed simultaneously: device AND micro-batch size.
+
+    3B Q-G was designed with identical batch for both:
+      GPU fp32: batch 1×8 = 8
+      CPU fp32: batch 1×8 = 8  ← CONTROLLED
+      → Only variable: device (CPU vs GPU)
+
+  ■ Experiment Configuration:
+
+    ┌──────────────────┬──────────────────────┬──────────────────────┐
+    │                  │ Q-G GPU Phase1       │ Q-G CPU Phase1       │
+    ├──────────────────┼──────────────────────┼──────────────────────┤
+    │ Model            │ Qwen2.5-3B-Instruct  │ Qwen2.5-3B-Instruct  │
+    │ Quantization     │ QLoRA 4-bit (bnb)    │ QLoRA 4-bit (bnb)    │
+    │ Device           │ GPU (CUDA)           │ CPU (CUDA_VISIBLE=-1)│
+    │ Precision        │ fp32                 │ fp32                 │
+    │ batch × accum    │ 1×8 = 8             │ 1×8 = 8              │
+    │ learning_rate    │ 1.0e-4              │ 1.0e-4               │
+    │ lr_scheduler     │ cosine (100 steps)   │ cosine (100 steps)   │
+    │ warmup_steps     │ 30                   │ 30                   │
+    │ seed             │ 5108                 │ 5108                 │
+    │ lora_rank        │ 8                    │ 8                    │
+    │ lora_alpha       │ 16                   │ 16                   │
+    │ lora_dropout     │ 0.05                 │ 0.05                 │
+    │ Trainable params │ 14,966,784           │ 14,966,784           │
+    └──────────────────┴──────────────────────┴──────────────────────┘
+
+    ONLY difference: CUDA_VISIBLE_DEVICES=0 (GPU) vs CUDA_VISIBLE_DEVICES=-1 (CPU)
+
+  ■ GPU Phase1 Results (100 steps, 4m 12s):
+
+    step  10: loss 1.806  grad_norm 0.2439  lr 3.000e-05
+    step  20: loss 1.590  grad_norm 0.09483 lr 6.333e-05
+    step  30: loss 1.387  grad_norm 0.07858 lr 9.667e-05
+    step  40: loss 1.294  grad_norm 0.07567 lr 9.598e-05
+    step  50: loss 1.358  grad_norm 0.07605 lr 8.290e-05
+    step  60: loss 1.297  grad_norm 0.07792 lr 6.330e-05
+    step  70: loss 1.194  grad_norm 0.06814 lr 4.107e-05
+    step  80: loss 1.076  grad_norm 0.06217 lr 2.061e-05
+    step  90: loss 1.116  grad_norm 0.07370 lr 5.970e-06
+    step 100: loss 1.099  grad_norm 0.04463 lr 5.035e-08
+
+    train_loss = 1.3217 | runtime = 4m 12s
+
+  ■ CPU Phase1 Results (partial — step 50 at time of experiment suspension):
+
+    step  10: loss 1.807  grad_norm 0.2447  lr 3.000e-05
+    step  20: loss 1.592  grad_norm 0.0939  lr 6.333e-05
+    step  30: loss 1.388  grad_norm 0.07855 lr 9.667e-05
+    step  40: loss 1.295  grad_norm 0.07685 lr 9.598e-05
+    step  50: loss 1.360  grad_norm 0.07626 lr 8.290e-05
+
+    Runtime: ~97 s/step, estimated ~2.7 hours for 100 steps
+
+  ■ CPU vs GPU Step-by-Step Comparison:
+
+    ┌──────────┬──────────────┬──────────────┬──────────┐
+    │ Step     │ GPU fp32     │ CPU fp32     │ Δ        │
+    ├──────────┼──────────────┼──────────────┼──────────┤
+    │ step  10 │ 1.806        │ 1.807        │ +0.001   │
+    │ step  20 │ 1.590        │ 1.592        │ +0.002   │
+    │ step  30 │ 1.387        │ 1.388        │ +0.001   │
+    │ step  40 │ 1.294        │ 1.295        │ +0.001   │
+    │ step  50 │ 1.358        │ 1.360        │ +0.002   │
+    └──────────┴──────────────┴──────────────┴──────────┘
+
+    Max Δ: 0.002. Average Δ: 0.0014.
+    CPU fp32 = GPU fp32 across all 5 logged steps.
+
+    Compare with 7B QLoRA 4-bit Phase1 (F vs C/G, DIFFERENT BATCH):
+      step  10: Δ = 0.014
+      step  20: Δ = 0.029
+      step  30: Δ = 0.002
+      step  40: Δ = 0.029  ← 3B shows 0.001 here
+      step  50: Δ = 0.008
+
+    7B divergence was 10-20× larger than 3B. The ONLY difference in experimental
+    setup: 7B GPU used batch 1×8, 7B CPU used batch 2×4.
+    3B used batch 1×8 for both → no divergence.
+
+  ■ FINDING — Batch Confound Discovered:
+
+    ┌─────────────────────┬───────────┬───────────┬──────────┐
+    │ Experiment          │ GPU batch │ CPU batch │ CPU vs GPU│
+    ├─────────────────────┼───────────┼───────────┼──────────┤
+    │ 3B 16-bit (BF-6,7) │ 1×8       │ 1×8       │ = (0.002)│
+    │ 3B 4-bit (BF-8)    │ 1×8       │ 1×8       │ = (0.002)│
+    │ 7B 4-bit (JF-8,10) │ 1×8       │ 2×4       │ ≠ (0.82%)│
+    └─────────────────────┴───────────┴───────────┴──────────┘
+
+    When batch is controlled (same for CPU and GPU):
+      → CPU = GPU in ALL conditions: 16-bit, 4-bit, continuous lr, discontinuous lr
+
+    When batch differs (1×8 vs 2×4):
+      → CPU ≠ GPU (7B only case where batch differed)
+
+    CONCLUSION: The 7B "0.82% CPU deeper" finding was likely caused by
+    micro-batch mismatch (2×4 vs 1×8), NOT by CPU determinism.
+
+    This CANNOT be verified on 7B because GPU fp32 with batch 2×4 would OOM
+    on 24GB VRAM (7B × 4 bytes = 28GB + optimizer states).
+
+  ■ Impact on Previous Conclusions:
+
+    RETRACTED:
+      - "Quantization is the sole variable causing CPU ≠ GPU" (BF-7 conclusion)
+      - "CPU finds different trajectory from GPU" (7B hypothesis)
+      - "0.82% Phase1 divergence → different basins" (7B analysis)
+      - "96.6% precision / 3.4% CPU determinism" decomposition (artifact + batch confound)
+
+    STILL VALID:
+      - bf16 = fp32 in steady-state (3× confirmed)
+      - Precision transition with continuous lr = zero effect
+      - CPU = GPU in 16-bit full (still true, additionally now true in 4-bit too)
+      - MMLU warm restart improvement 4/4 positive (7B, independent of train_loss)
+      - train_loss 22% = HF Trainer artifact
+      - GPU hardware noise floor observation
+
+    UNRESOLVED:
+      - 7B batch confound (2×4 vs 1×8) — cannot test without server-grade hardware
+      - Whether micro-batch size (not device) caused the 7B Phase1 divergence
+      - MMLU differences between F, C, G — may reflect batch, not CPU/GPU
+
+  ■ Experiment Status: SUSPENDED
+
+    Reason: Too many confounding variables discovered:
+      1. train_loss 22% was measurement artifact (known since BF-4)
+      2. 7B Phase1 CPU vs GPU was batch-confounded (newly discovered)
+      3. Single seed throughout (42 for 7B, 5108 for 3B)
+
+    No further experiments planned unless server-grade hardware becomes available
+    to resolve the 7B batch confound (GPU fp32 batch 2×4 = requires >24GB VRAM).
   ■ Purpose: Validate CPU-Anchor effect without quantization bottleneck
   ■ Naming: BF-1, BF-2, ... (Branch Full-precision series)
 
